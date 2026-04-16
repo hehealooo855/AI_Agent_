@@ -60,6 +60,98 @@ def agen_remora(data_df, nama_aset):
     
     respons = model.generate_content(prompt)
     return respons.text
+import numpy as np
+
+# ==========================================
+# 5. FUNGSI MATEMATIKA BANDARMOLOGI (HENGKY A.)
+# ==========================================
+def hitung_floor_price(df, periode_akumulasi=10):
+    """
+    Menghitung VWAP (Volume Weighted Average Price) 
+    sebagai proxy 'Floor Price' / Harga Modal Bandar.
+    """
+    # Mengambil N hari terakhir (fase akumulasi)
+    akumulasi_df = df.tail(periode_akumulasi).copy()
+    
+    # Typical Price = (High + Low + Close) / 3
+    akumulasi_df['Typical_Price'] = (akumulasi_df['High'] + akumulasi_df['Low'] + akumulasi_df['Close']) / 3
+    
+    # VWAP = Sum(Typical Price * Volume) / Sum(Volume)
+    floor_price = (akumulasi_df['Typical_Price'] * akumulasi_df['Volume']).sum() / akumulasi_df['Volume'].sum()
+    return floor_price
+
+# ==========================================
+# 6. FUNGSI MANAJEMEN RISIKO (POSITION SIZING)
+# ==========================================
+def hitung_lot_aman(modal_rdn, resiko_persen, harga_masuk, floor_price_bandar):
+    # Risiko Rupiah yang siap hilang
+    toleransi_kerugian_rp = modal_rdn * (resiko_persen / 100)
+    
+    # Jarak CL: Harga masuk ke Floor Price (Bandar out di bawah floor price)
+    # Kita beri buffer 1% di bawah floor price agar tidak kena false breakdown
+    titik_cl = floor_price_bandar * 0.99 
+    
+    jarak_cl_per_lembar = harga_masuk - titik_cl
+    
+    if jarak_cl_per_lembar <= 0:
+         return 0, titik_cl, "Harga sudah di bawah modal bandar. JANGAN BELI."
+         
+    # Maksimal beli (dalam lembar) = Toleransi Rp / Kerugian per lembar
+    maks_lembar = toleransi_kerugian_rp / jarak_cl_per_lembar
+    maks_lot = int(maks_lembar / 100)
+    
+    return maks_lot, titik_cl, "Aman untuk masuk."
+def agen_remora_v2(data_df, nama_aset):
+    # Hitung Floor Price Bandar
+    floor_price = hitung_floor_price(data_df)
+    harga_sekarang = data_df['Close'].iloc[-1]
+    vol_sekarang = data_df['Volume'].iloc[-1]
+    rata_vol = data_df['Volume'].tail(20).mean()
+    
+    prompt = f"""
+    Bertindaklah sebagai Hengky Adinata, penganut aliran 'Remora' (Smart Money Tracker).
+    Aturan utama Anda: Jangan trading jika bandar sedang distribusi. CL HANYA jika bandar keluar.
+    
+    Data {nama_aset} hari ini:
+    - Harga Terakhir: {harga_sekarang}
+    - Floor Price (Modal Rata-rata Bandar): {floor_price:.2f}
+    - Volume Hari Ini vs Rata-rata: {vol_sekarang/rata_vol:.1f}x
+    
+    Berikan instruksi eksekusi yang TEGAS dan JELAS:
+    1. STATUS KEPUTUSAN: Jawab dengan 'BUY', 'HOLD', atau 'NO BUY / BANDAR OUT'.
+    2. ANALISIS MOMENTUM: Jelaskan apakah bandar sedang akumulasi (mendekati floor price dengan volume kering) atau distribusi.
+    3. INSTRUKSI CL: Di mana titik batal skenarionya? (Harus di bawah Floor Price).
+    """
+    
+    respons = model.generate_content(prompt)
+    return respons.text, floor_price
+with tab_remora:
+    # Bagian Analisis AI
+    hasil_remora, modal_bandar = agen_remora_v2(df, nama_label[pilihan_aset])
+    st.markdown(hasil_remora)
+    
+    st.divider()
+    
+    # Bagian Modul Eksekusi / Position Sizing
+    st.markdown("### 🧮 Terminal Eksekusi (Risk Management)")
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        saldo = st.number_input("Saldo RDN Aktif (Rp)", value=10000000, step=1000000)
+        resiko = st.slider("Toleransi Risiko per Trade (%)", min_value=0.5, max_value=5.0, value=1.0, step=0.1)
+        
+    with col_b:
+        st.info(f"📍 Floor Price Bandar (Estimasi VWAP): **Rp {modal_bandar:,.0f}**")
+        
+        if st.button("Hitung Maksimal Beli (Lot)"):
+            lot, titik_cl, pesan = hitung_lot_aman(saldo, resiko, harga_terkini, modal_bandar)
+            
+            if lot > 0:
+                st.success(f"✅ **Beli Maksimal: {lot} Lot**")
+                st.warning(f"🚨 **Cut Loss Jika Harga Tutup di Bawah: Rp {titik_cl:,.0f}**")
+                st.caption(f"Jika terkena CL, kerugian maksimal Anda adalah Rp {saldo*(resiko/100):,.0f} ({resiko}% dari saldo).")
+            else:
+                st.error(pesan)
 
 def agen_timothy(data_df, nama_aset):
     harga_sekarang = data_df['Close'].iloc[-1]
