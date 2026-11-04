@@ -18,7 +18,6 @@ from collections import Counter
 import calendar
 import concurrent.futures
 import streamlit.components.v1 as components 
-from forecasting import render_forecast_tab  # modul Forecast Volume Mingguan
 
 # --- LIBRARY UNTUK TABEL EXCEL-LIKE ---
 try:
@@ -2170,43 +2169,41 @@ def main_dashboard():
             st.info("Belum ada data transaksi yang cukup untuk membuat Master Visit Plan.")
             
     with t_forecast:
-        render_forecast_tab(df_scope_all)
-        with st.expander("📉 Proyeksi Omset Linear (versi lama)", expanded=False):
-            st.subheader("🔮 Prediksi Omset (Forecasting)")
-            st.info("Prediksi tren omset 30 hari ke depan berdasarkan data historis harian.")
+        st.subheader("🔮 Prediksi Omset (Forecasting)")
+        st.info("Prediksi tren omset 30 hari ke depan berdasarkan data historis harian.")
         
-            df_forecast = df_scope_all[df_scope_all['Tanggal'].dt.year > 2000].groupby('Tanggal')['Jumlah'].sum().reset_index().sort_values('Tanggal')
+        df_forecast = df_scope_all[df_scope_all['Tanggal'].dt.year > 2000].groupby('Tanggal')['Jumlah'].sum().reset_index().sort_values('Tanggal')
         
-            if len(df_forecast) > 10:
-                df_forecast['Date_Ordinal'] = df_forecast['Tanggal'].apply(lambda x: x.toordinal())
-                x = df_forecast['Date_Ordinal'].values; y = df_forecast['Jumlah'].values
-                z = np.polyfit(x, y, 1); p = np.poly1d(z)
-                last_date = df_forecast['Tanggal'].max()
-                future_days = 30
-                future_dates = [last_date + datetime.timedelta(days=i) for i in range(1, future_days + 1)]
-                future_ordinals = [d.toordinal() for d in future_dates]
-                future_values = p(future_ordinals)
+        if len(df_forecast) > 10:
+            df_forecast['Date_Ordinal'] = df_forecast['Tanggal'].apply(lambda x: x.toordinal())
+            x = df_forecast['Date_Ordinal'].values; y = df_forecast['Jumlah'].values
+            z = np.polyfit(x, y, 1); p = np.poly1d(z)
+            last_date = df_forecast['Tanggal'].max()
+            future_days = 30
+            future_dates = [last_date + datetime.timedelta(days=i) for i in range(1, future_days + 1)]
+            future_ordinals = [d.toordinal() for d in future_dates]
+            future_values = p(future_ordinals)
             
-                df_history = df_forecast[['Tanggal', 'Jumlah']].copy()
-                df_history['Type'] = 'Historis'
-                df_future = pd.DataFrame({'Tanggal': future_dates, 'Jumlah': future_values})
-                df_future['Type'] = 'Prediksi'
-                df_combined = pd.concat([df_history, df_future])
+            df_history = df_forecast[['Tanggal', 'Jumlah']].copy()
+            df_history['Type'] = 'Historis'
+            df_future = pd.DataFrame({'Tanggal': future_dates, 'Jumlah': future_values})
+            df_future['Type'] = 'Prediksi'
+            df_combined = pd.concat([df_history, df_future])
             
-                fig_forecast = px.line(df_combined, x='Tanggal', y='Jumlah', color='Type', line_dash='Type', color_discrete_map={'Historis': '#2980b9', 'Prediksi': '#e74c3c'})
-                fig_forecast.update_layout(
-                    title="Proyeksi Omset 30 Hari Kedepan", 
-                    xaxis_title="Tanggal", 
-                    yaxis_title="Omset",
-                    xaxis=dict(fixedrange=True), # Kunci sumbu X
-                    yaxis=dict(fixedrange=True)  # Kunci sumbu Y
-                )
+            fig_forecast = px.line(df_combined, x='Tanggal', y='Jumlah', color='Type', line_dash='Type', color_discrete_map={'Historis': '#2980b9', 'Prediksi': '#e74c3c'})
+            fig_forecast.update_layout(
+                title="Proyeksi Omset 30 Hari Kedepan", 
+                xaxis_title="Tanggal", 
+                yaxis_title="Omset",
+                xaxis=dict(fixedrange=True), # Kunci sumbu X
+                yaxis=dict(fixedrange=True)  # Kunci sumbu Y
+            )
             
-                # Matikan toolbar bawaan Plotly
-                st.plotly_chart(fig_forecast, use_container_width=True, config={'displayModeBar': False})
-                trend = "NAIK 📈" if z[0] > 0 else "TURUN 📉"
-                st.write(f"Analisa Tren: Berdasarkan data historis, tren penjualan terlihat {trend}.")
-            else: st.warning("Data belum cukup untuk melakukan prediksi (minimal 10 hari transaksi).")
+            # Matikan toolbar bawaan Plotly
+            st.plotly_chart(fig_forecast, use_container_width=True, config={'displayModeBar': False})
+            trend = "NAIK 📈" if z[0] > 0 else "TURUN 📉"
+            st.write(f"Analisa Tren: Berdasarkan data historis, tren penjualan terlihat {trend}.")
+        else: st.warning("Data belum cukup untuk melakukan prediksi (minimal 10 hari transaksi).")
 
     with t4:
         st.subheader("📋 Data Rincian & Analisis Spesifik")
