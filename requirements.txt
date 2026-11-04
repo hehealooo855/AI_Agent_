@@ -1,5 +1,13 @@
-streamlit
-yfinance
+streamlit>=1.30.0
+streamlit-aggrid==1.0.5
 pandas
-numpy
+plotly
+pytz
+pyotp
+qrcode
+pillow
+xlsxwriter
+pyarrow
 google-generativeai
+pymysql
+SQLAlchemy
