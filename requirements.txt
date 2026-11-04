@@ -1,6 +1,13 @@
 streamlit>=1.30.0
-pandas>=2.0
-numpy
+streamlit-aggrid==1.0.5
+pandas
 plotly
-openpyxl
+pytz
+pyotp
+qrcode
+pillow
 xlsxwriter
+pyarrow
+google-generativeai
+pymysql
+SQLAlchemy
