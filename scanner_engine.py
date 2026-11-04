@@ -1,34 +1,49 @@
-def remora_scanner(list_emiten):
-    saham_terdeteksi = []
-    
-    for simbol in list_emiten:
-        df = tarik_data_historis(simbol, periode="1mo")
-        if df is not None and len(df) > 20:
-            vol_sekarang = df['Volume'].iloc[-1]
-            avg_vol = df['Volume'].tail(20).mean()
-            
-            # Deteksi lonjakan volume > 250% (Khas Remora)
-            if vol_sekarang > (avg_vol * 2.5):
-                change = ((df['Close'].iloc[-1] - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100
-                saham_terdeteksi.append({
-                    "Simbol": simbol,
-                    "Lonjakan Vol": f"{vol_sekarang/avg_vol:.2f}x",
-                    "Perubahan Harga": f"{change:.2f}%"
-                })
-    return saham_terdeteksi
-
-def analisis_ptro_deep_dive():
-    ptro = yf.Ticker("PTRO.JK")
-    # Mengambil Laba Rugi Terbaru
-    income_stmt = ptro.financials
-    news = ptro.news[:3] # 3 berita terbaru
-    
-    prompt = f"""
-    Analisis PTRO dari sudut pandang Timothy Ronald:
-    1. Laba Rugi: {income_stmt.to_string() if not income_stmt.empty else "Data tidak tersedia"}
-    2. Berita Terakhir: {[n['title'] for n in news]}
-    3. Kondisi Global: Harga batubara global, inflasi, dan dominasi infrastruktur di Asia.
-    
-    Berikan narasi apakah PTRO adalah 'The Next Big Thing' dalam siklus hard asset atau hanya kebisingan pasar.
-    """
-    return model.generate_content(prompt).text
+username,password,role,sales_name
+direktur,bos2026,direktur,All
+manager,admin2026,manager,All
+fauziah,!123!,manager,All
+madong,1!123,supervisor,MADONG
+rozy,123,sales,ROZY
+sherin,123,sales,SHERIN
+novi,123,sales,NOVI
+hamzah,123,sales,HAMZAH
+sri,123,sales,SRI RAMADHANI
+aswin,123,sales,ASWIN
+riska,123,sales,RISKA
+santi,123,sales,SANTI
+fandi,123,sales,FANDI
+fitri,123,sales,FITRI 
+sinta,123,sales,SINTA
+william,123,supervisor,WILLIAM
+dewy,123,sales,DEWY CLA
+ade,123,sales,ADE
+akbar,!1!23,supervisor,AKBAR
+mariana,123,sales,MARIANA
+bastian,123,sales,BASTIAN
+gani,123,sales,GANI
+dwi,123,sales,DWI
+lisman,!1!23,supervisor,LISMAN
+jaya,123,sales,JAYA - MARIANA
+rizki,123,sales,RIZKI
+naufal,123,sales,NAUFAL
+syahrul,123,sales,SYAHRUL
+rini,123,sales,RINI
+lydia,123,sales,LYDIA
+yani,123,sales,KITO - YANI
+yogi,123,sales,YOGI
+mitha,123,sales,MITHA
+wira,123,sales,WIRA
+bayu,123,sales,BAYU
+devi,123,sales,DEVI
+erni,123,sales,ERNI ST
+aprilika,123,sales,APRILIKA ST
+evri,123,sales,EVRI ST
+nabilla,123,sales,NABILLA - SATTO
+betty,123,sales,BETTY
+habibi,123,sales,HABIBI
+faisal,123,sales,FAISAL SYB
+yuda,123,sales,YUDA TF
+dimas,123,sales,DIMAS TF
+feri,123,sales,FERI
+nita,123,sales,NITA REN
+dani,123,sales,DANI
