@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import datetime
-import json
 import time
 import re
 import pytz
@@ -189,7 +188,7 @@ def map_city_to_province(city_name):
     return "LAIN-LAIN"
 
 # Target bulanan (Rp) - DIHITUNG DARI DATA: rata-rata omset Agu-Okt 2026 x 1,10 (growth 10%), dibulatkan Rp100.000.
-# Ini angka awal; ubah langsung di sini atau lewat panel 'Input Target Penjualan' (panel menimpa nilai di bawah setelah disimpan).
+# Ini angka awal (usulan berbasis histori); ganti langsung di sini dengan target resmi.
 TARGET_DATABASE = {'TIM UTAMA': {'Biore': 364200000,
                'Citra': 674400000,
                'Emina': 3091500000,
@@ -214,7 +213,7 @@ ESTIMASI_TARGET_BULANAN = {
 }
 
 # Target bulanan (Rp) - DIHITUNG DARI DATA: rata-rata omset Agu-Okt 2026 x 1,10 (growth 10%), dibulatkan Rp100.000.
-# Ini angka awal; ubah langsung di sini atau lewat panel 'Input Target Penjualan' (panel menimpa nilai di bawah setelah disimpan).
+# Ini angka awal (usulan berbasis histori); ganti langsung di sini dengan target resmi.
 INDIVIDUAL_TARGETS = {'AGUS SANTOSO': {'Biore': 5700000,
                   'Citra': 7100000,
                   'Emina': 40100000,
@@ -1256,49 +1255,15 @@ SALES_MAPPING = {
 # =========================================================================
 # 🔧 KONFIGURASI DINAMIS (BARU)
 # - Daftar MERK & SALES dibaca otomatis dari isi data (unique values).
-# - TARGET tidak perlu ditulis di kode: diinput lewat panel "Input Target Penjualan"
-#   di dashboard (manager/direktur), disimpan di TARGET_CONFIG_FILE, lalu mengisi
-#   TARGET_DATABASE & INDIVIDUAL_TARGETS yang sudah dipakai seluruh logika di bawah.
+# - Target diisi langsung pada TARGET_DATABASE (per brand) & INDIVIDUAL_TARGETS (per sales) di atas.
 # =========================================================================
-TARGET_CONFIG_FILE = "target_config.json"
 
 # Opsional: nama di kolom Penjualan yang HARUS dianggap Non-Sales (mis. admin/fakturis).
 # Kosongkan jika tidak ada. Contoh: SALES_EXCLUDE = ["ERNI ST"]
 SALES_EXCLUDE = []
 
-def refresh_target_derivatives():
-    global SUPERVISOR_TOTAL_TARGETS, TARGET_NASIONAL_VAL
-    SUPERVISOR_TOTAL_TARGETS = {k: sum(v.values()) for k, v in TARGET_DATABASE.items()}
-    TARGET_NASIONAL_VAL = sum(SUPERVISOR_TOTAL_TARGETS.values())
-
-def load_target_config():
-    """Isi TARGET_DATABASE & INDIVIDUAL_TARGETS (in-place) dari TARGET_CONFIG_FILE."""
-    cfg = {}
-    if os.path.exists(TARGET_CONFIG_FILE):
-        try:
-            with open(TARGET_CONFIG_FILE, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
-            cfg = {}
-    for key, store in (("team", TARGET_DATABASE), ("individual", INDIVIDUAL_TARGETS)):
-        if key in cfg: store.clear()  # setelah target pernah disimpan lewat panel, file JSON menggantikan angka bawaan di kode
-        for owner, brand_map in (cfg.get(key) or {}).items():
-            clean = {}
-            for brand, val in (brand_map or {}).items():
-                try:
-                    if float(val) > 0: clean[brand] = float(val)
-                except (TypeError, ValueError):
-                    pass
-            if clean: store[str(owner).strip().upper()] = clean
-    refresh_target_derivatives()
-
-def save_target_config(individual, team):
-    tmp_file = TARGET_CONFIG_FILE + ".tmp"
-    with open(tmp_file, "w", encoding="utf-8") as f:
-        json.dump({"individual": individual, "team": team}, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_file, TARGET_CONFIG_FILE)
-
-load_target_config()
+# Nama file cache data. Dinaikkan versinya agar cache lama (hasil kode sebelumnya) otomatis tidak terpakai.
+PARQUET_FILE = "master_database_penjualan_v2.parquet"
 
 def log_activity(user, action):
     log_file = 'audit_log.csv'
@@ -1328,7 +1293,7 @@ def generate_daily_token():
 
 def render_custom_progress(title, current, target):
     if not target:
-        st.caption(f"🎯 {title}: target belum diinput (Realisasi {format_idr(current)}). Isi di panel 'Input Target Penjualan'.")
+        st.caption(f"🎯 {title}: target belum diinput (Realisasi {format_idr(current)}). Isi di TARGET_DATABASE / INDIVIDUAL_TARGETS pada kode.")
         return
     pct = (current / target) * 100
     visual_pct = min(pct, 100)
@@ -1623,15 +1588,18 @@ def load_data_from_url():
     
     df = df.drop(columns=['Nama_Pencocokan', 'Kunci_Kode'])
     
-    try: df.to_parquet("master_database_penjualan.parquet", index=False)
+    try: df.to_parquet(PARQUET_FILE, index=False)
     except: pass 
             
     return df
 
 def load_data(fast_mode=False):
-    if fast_mode and os.path.exists("master_database_penjualan.parquet"):
+    if fast_mode and os.path.exists(PARQUET_FILE):
         try:
-            return pd.read_parquet("master_database_penjualan.parquet")
+            df_cached = pd.read_parquet(PARQUET_FILE)
+            # BARU: cache dianggap rusak bila hampir semua sales tercatat 'Non-Sales' -> baca ulang dari sumber
+            if not (len(df_cached) > 0 and (df_cached['Penjualan'].astype(str) == 'Non-Sales').mean() > 0.9):
+                return df_cached
         except Exception:
             pass
     return load_data_from_url()
@@ -2019,96 +1987,6 @@ def login_page():
                     st.session_state['login_step'] = 'credentials'
                     st.rerun()
 
-def suggest_targets_from_history(df_source, n_months=3, growth_pct=10.0):
-    """Saran target individu (Sales x Merk) = rata-rata omset bulanan dari N bulan LENGKAP terakhir x (1 + growth%)."""
-    d = df_source[['Tanggal', 'Penjualan', 'Merk', 'Jumlah']].copy()
-    d = d[(d['Penjualan'].astype(str) != 'Non-Sales') & (d['Tanggal'].dt.year > 2000)]
-    if d.empty: return {}
-    last_day = d['Tanggal'].max()
-    d['Periode'] = d['Tanggal'].dt.to_period('M')
-    periods = sorted(d['Periode'].unique())
-    if last_day.day != last_day.days_in_month and len(periods) > 1: periods = periods[:-1]  # buang bulan berjalan yang belum lengkap
-    periods = periods[-int(n_months):]
-    d = d[d['Periode'].isin(periods)]
-    grp = d.groupby([d['Penjualan'].astype(str), d['Merk'].astype(str)])['Jumlah'].sum()
-    out = {}
-    for (s, b), tot in grp.items():
-        if b in ('-', ''): continue
-        val = round(tot / len(periods) * (1 + growth_pct / 100.0), -5)
-        if val > 0: out.setdefault(s, {})[b] = float(val)
-    return out
-
-def render_target_editor(df_source):
-    """Panel input target (manager/direktur). Daftar sales & merk otomatis dari data."""
-    sales_names = sorted(({str(s) for s in df_source['Penjualan'].dropna().unique()} - {'Non-Sales'}) | set(INDIVIDUAL_TARGETS.keys()))
-    brands_in_cfg = set()
-    for _m in list(TARGET_DATABASE.values()) + list(INDIVIDUAL_TARGETS.values()): brands_in_cfg |= set(_m.keys())
-    brand_names = sorted(({str(b) for b in df_source['Merk'].dropna().unique()} - {'-', ''}) | brands_in_cfg)
-    if not sales_names or not brand_names:
-        return
-
-    with st.expander("🎯 Input Target Penjualan", expanded=False):
-        st.caption("Daftar sales & merk terisi otomatis dari data. Isi target (Rp / bulan), lalu klik Simpan. Kosong / 0 = tanpa target.")
-        ver = st.session_state.get('target_editor_ver', 0)
-        col_a, col_b, col_c = st.columns([1, 1, 2])
-        n_basis = col_a.selectbox("Basis histori (bulan lengkap terakhir)", [1, 3, 6], index=1)
-        growth_pct = col_b.number_input("Growth (%)", value=10.0, step=1.0)
-        if col_c.button("✨ Isi Otomatis dari Histori", use_container_width=True):
-            st.session_state['target_prefill_ind'] = suggest_targets_from_history(df_source, n_basis, growth_pct)
-            st.session_state['target_editor_ver'] = ver + 1
-            st.rerun()
-        if 'target_prefill_ind' in st.session_state:
-            st.info("📝 Tabel terisi dari saran histori. Ubah bila perlu, lalu klik Simpan Target agar berlaku.")
-        src_ind = st.session_state.get('target_prefill_ind', INDIVIDUAL_TARGETS)
-
-        with st.form("form_input_target"):
-            st.markdown("**1) Target Individu: Sales × Merk**")
-            base_ind = pd.DataFrame(0.0, index=sales_names, columns=brand_names)
-            for s, bmap in src_ind.items():
-                for b, v in bmap.items():
-                    if s in base_ind.index and b in base_ind.columns: base_ind.at[s, b] = float(v)
-            base_ind.index.name = "Sales"
-            edited_ind = st.data_editor(
-                base_ind.reset_index(), hide_index=True, use_container_width=True, disabled=["Sales"],
-                column_config={b: st.column_config.NumberColumn(b, min_value=0, step=100000, format="%d") for b in brand_names},
-                key=f"editor_target_individu_{ver}")
-
-            st.markdown("**2) Target Tim per Merk** (untuk Rapor Brand & Target IJL)")
-            st.caption("Supervisor / Tim boleh dikosongkan (otomatis 'TIM UTAMA'). Target Tim = 0 → otomatis dijumlahkan dari target individu merk tsb.")
-            team_rows = []
-            for b in brand_names:
-                spv_found, val_found = "", 0.0
-                for spv, bmap in TARGET_DATABASE.items():
-                    if b in bmap: spv_found, val_found = spv, float(bmap[b]); break
-                team_rows.append({"Merk": b, "Supervisor / Tim": spv_found, "Target Tim": val_found})
-            edited_team = st.data_editor(
-                pd.DataFrame(team_rows), hide_index=True, use_container_width=True, disabled=["Merk"],
-                column_config={"Target Tim": st.column_config.NumberColumn("Target Tim", min_value=0, step=100000, format="%d")},
-                key=f"editor_target_tim_{ver}")
-
-            submit_target = st.form_submit_button("💾 Simpan Target", use_container_width=True)
-
-        if submit_target:
-            ind_out = {}
-            for _, row in edited_ind.iterrows():
-                bm = {b: float(row[b]) for b in brand_names if pd.notna(row[b]) and float(row[b]) > 0}
-                if bm: ind_out[str(row['Sales']).strip().upper()] = bm
-            rollup = {b: sum(m.get(b, 0) for m in ind_out.values()) for b in brand_names}
-            team_out = {}
-            for _, row in edited_team.iterrows():
-                b = row['Merk']
-                spv = str(row['Supervisor / Tim']).strip().upper() if pd.notna(row['Supervisor / Tim']) else ""
-                if spv in ("", "NAN", "NONE"): spv = "TIM UTAMA"
-                val = float(row['Target Tim']) if pd.notna(row['Target Tim']) else 0.0
-                if val <= 0: val = rollup.get(b, 0)
-                if val > 0: team_out.setdefault(spv, {})[b] = val
-            save_target_config(ind_out, team_out)
-            st.session_state.pop('target_prefill_ind', None)
-            st.session_state['target_editor_ver'] = ver + 1
-            st.success("✅ Target tersimpan.")
-            time.sleep(1)
-            st.rerun()
-
 def main_dashboard():
     def get_color_achv(val):
         try:
@@ -2205,8 +2083,8 @@ def main_dashboard():
                 
                 if st.button("🔄 Force Sync Database", use_container_width=True):
                     st.cache_data.clear() 
-                    if os.path.exists("master_database_penjualan.parquet"):
-                        os.remove("master_database_penjualan.parquet") 
+                    if os.path.exists(PARQUET_FILE):
+                        os.remove(PARQUET_FILE) 
                     st.success("Tersinkronisasi!")
                     time.sleep(1)
                     st.rerun()
@@ -2316,9 +2194,6 @@ def main_dashboard():
         
     st.title("🚀 Executive Dashboard")
     st.markdown("---")
-
-    if role in ['manager', 'direktur'] or my_name.lower() == 'fauziah':
-        render_target_editor(df)
 
     # =========================================================
     # HIERARKI RUANG LINGKUP (UI & BACKGROUND LOGIC)
