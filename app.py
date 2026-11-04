@@ -977,6 +977,25 @@ def login_page():
                     st.session_state['login_step'] = 'credentials'
                     st.rerun()
 
+def suggest_targets_from_history(df_source, n_months=3, growth_pct=10.0):
+    """Saran target individu (Sales x Merk) = rata-rata omset bulanan dari N bulan LENGKAP terakhir x (1 + growth%)."""
+    d = df_source[['Tanggal', 'Penjualan', 'Merk', 'Jumlah']].copy()
+    d = d[(d['Penjualan'].astype(str) != 'Non-Sales') & (d['Tanggal'].dt.year > 2000)]
+    if d.empty: return {}
+    last_day = d['Tanggal'].max()
+    d['Periode'] = d['Tanggal'].dt.to_period('M')
+    periods = sorted(d['Periode'].unique())
+    if last_day.day != last_day.days_in_month and len(periods) > 1: periods = periods[:-1]  # buang bulan berjalan yang belum lengkap
+    periods = periods[-int(n_months):]
+    d = d[d['Periode'].isin(periods)]
+    grp = d.groupby([d['Penjualan'].astype(str), d['Merk'].astype(str)])['Jumlah'].sum()
+    out = {}
+    for (s, b), tot in grp.items():
+        if b in ('-', ''): continue
+        val = round(tot / len(periods) * (1 + growth_pct / 100.0), -5)
+        if val > 0: out.setdefault(s, {})[b] = float(val)
+    return out
+
 def render_target_editor(df_source):
     """Panel input target (manager/direktur). Daftar sales & merk otomatis dari data."""
     sales_names = sorted(({str(s) for s in df_source['Penjualan'].dropna().unique()} - {'Non-Sales'}) | set(INDIVIDUAL_TARGETS.keys()))
@@ -988,17 +1007,29 @@ def render_target_editor(df_source):
 
     with st.expander("🎯 Input Target Penjualan", expanded=False):
         st.caption("Daftar sales & merk terisi otomatis dari data. Isi target (Rp / bulan), lalu klik Simpan. Kosong / 0 = tanpa target.")
+        ver = st.session_state.get('target_editor_ver', 0)
+        col_a, col_b, col_c = st.columns([1, 1, 2])
+        n_basis = col_a.selectbox("Basis histori (bulan lengkap terakhir)", [1, 3, 6], index=1)
+        growth_pct = col_b.number_input("Growth (%)", value=10.0, step=1.0)
+        if col_c.button("✨ Isi Otomatis dari Histori", use_container_width=True):
+            st.session_state['target_prefill_ind'] = suggest_targets_from_history(df_source, n_basis, growth_pct)
+            st.session_state['target_editor_ver'] = ver + 1
+            st.rerun()
+        if 'target_prefill_ind' in st.session_state:
+            st.info("📝 Tabel terisi dari saran histori. Ubah bila perlu, lalu klik Simpan Target agar berlaku.")
+        src_ind = st.session_state.get('target_prefill_ind', INDIVIDUAL_TARGETS)
+
         with st.form("form_input_target"):
             st.markdown("**1) Target Individu: Sales × Merk**")
             base_ind = pd.DataFrame(0.0, index=sales_names, columns=brand_names)
-            for s, bmap in INDIVIDUAL_TARGETS.items():
+            for s, bmap in src_ind.items():
                 for b, v in bmap.items():
                     if s in base_ind.index and b in base_ind.columns: base_ind.at[s, b] = float(v)
             base_ind.index.name = "Sales"
             edited_ind = st.data_editor(
                 base_ind.reset_index(), hide_index=True, use_container_width=True, disabled=["Sales"],
                 column_config={b: st.column_config.NumberColumn(b, min_value=0, step=100000, format="%d") for b in brand_names},
-                key="editor_target_individu")
+                key=f"editor_target_individu_{ver}")
 
             st.markdown("**2) Target Tim per Merk** (untuk Rapor Brand & Target IJL)")
             st.caption("Supervisor / Tim boleh dikosongkan (otomatis 'TIM UTAMA'). Target Tim = 0 → otomatis dijumlahkan dari target individu merk tsb.")
@@ -1011,7 +1042,7 @@ def render_target_editor(df_source):
             edited_team = st.data_editor(
                 pd.DataFrame(team_rows), hide_index=True, use_container_width=True, disabled=["Merk"],
                 column_config={"Target Tim": st.column_config.NumberColumn("Target Tim", min_value=0, step=100000, format="%d")},
-                key="editor_target_tim")
+                key=f"editor_target_tim_{ver}")
 
             submit_target = st.form_submit_button("💾 Simpan Target", use_container_width=True)
 
@@ -1030,6 +1061,8 @@ def render_target_editor(df_source):
                 if val <= 0: val = rollup.get(b, 0)
                 if val > 0: team_out.setdefault(spv, {})[b] = val
             save_target_config(ind_out, team_out)
+            st.session_state.pop('target_prefill_ind', None)
+            st.session_state['target_editor_ver'] = ver + 1
             st.success("✅ Target tersimpan.")
             time.sleep(1)
             st.rerun()
