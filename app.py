@@ -2377,8 +2377,13 @@ def main_dashboard():
              render_custom_progress(f"👤 Target Tim {spv_name}", df_active['Jumlah'].sum(), target_pribadi)
         st.markdown("---")
 
-    t1, t2, t_detail_sales, t_detail_harian, t3, t5, t_forecast, t4, t_audit = st.tabs(["📊 Rapor Brand", "📈 Tren Harian", "👥 Detail Tim", "📝 Detail Sales", "🏆 Top Produk", "🚀 Kejar Omset", "🔮 Prediksi Omset", "📋 Data Rincian", "⚠️ Audit Fakturis"])
+    t1, t2, t_detail_sales, t_detail_harian, t3, t5, t_forecast, t4, t_audit = st.tabs(["📊 Rapor Brand", "📈 Tren Harian", "👥 Detail Tim", "📝 Detail Sales", "🏆 Top Produk", "🚀 Kejar Omset", "🔮 Prediksi Omset", "📋 Data Rincian", "⚠️ Audit Fakturis", "🤖 Asisten AI"])
     
+    with t_ai:
+        import ai_tools, ai_chat
+        cfg_ai = ai_tools.ToolsConfig(target_database=TARGET_DATABASE, individual_targets=INDIVIDUAL_TARGETS)
+        ai_chat.render_asisten_ai(df, user_role, user_name, cfg_ai, catat=log_activity)
+
     with t1:
         if role in ['manager', 'direktur'] or my_name.lower() == 'fauziah': loop_source = TARGET_DATABASE.items()
         elif is_supervisor_account: loop_source = {my_name_key: TARGET_DATABASE[my_name_key]}.items()
