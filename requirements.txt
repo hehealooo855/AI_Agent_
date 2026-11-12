@@ -8,6 +8,12 @@ qrcode
 pillow
 xlsxwriter
 pyarrow
-google-generativeai
+google-genai
+gspread
 pymysql
 SQLAlchemy
+google-generativeai
+gspread
+oauth2client
+pandas
+streamlit
