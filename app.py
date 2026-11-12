@@ -2377,7 +2377,7 @@ def main_dashboard():
              render_custom_progress(f"👤 Target Tim {spv_name}", df_active['Jumlah'].sum(), target_pribadi)
         st.markdown("---")
 
-    t1, t2, t_detail_sales, t_detail_harian, t3, t5, t_forecast, t4, t_audit = st.tabs(["📊 Rapor Brand", "📈 Tren Harian", "👥 Detail Tim", "📝 Detail Sales", "🏆 Top Produk", "🚀 Kejar Omset", "🔮 Prediksi Omset", "📋 Data Rincian", "⚠️ Audit Fakturis", "🤖 Asisten AI"])
+    t1, t2, t_detail_sales, t_detail_harian, t3, t5, t_forecast, t4, t_audit, t_ai = st.tabs(["📊 Rapor Brand", "📈 Tren Harian", "👥 Detail Tim", "📝 Detail Sales", "🏆 Top Produk", "🚀 Kejar Omset", "🔮 Prediksi Omset", "📋 Data Rincian", "⚠️ Audit Fakturis", "🤖 Asisten AI"])
     
     with t_ai:
         import ai_tools, ai_chat
