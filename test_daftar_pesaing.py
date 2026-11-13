@@ -93,3 +93,12 @@ def test_sheet_simpan_baru_lalu_perbarui_dan_baca():
     s.simpan("biore", ["Dove"])
     assert ws.baris == [["Merk", "Pesaing"], ["Biore", "Dove"], ["Emina", "Pixy"]]
     assert s.baca() == {"biore": ["Dove"], "emina": ["Pixy"]}
+
+
+def test_jelaskan_galat_tanpa_teks_mentah():
+    class Resp: status_code = 403
+    class APIError(Exception):
+        response = Resp()
+    assert "Editor" in dp.jelaskan_galat(APIError("rahasia-mentah")) and "rahasia" not in dp.jelaskan_galat(APIError("rahasia-mentah"))
+    assert "secrets.toml" in dp.jelaskan_galat(KeyError("gcp_service_account"))
+    assert "tidak dikenali" in dp.jelaskan_galat(RuntimeError("x"))
