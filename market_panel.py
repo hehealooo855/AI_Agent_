@@ -166,29 +166,6 @@ def _riset_otomatis(merk: str) -> Optional[ai_pesaing.HasilPesaing]:
         st.session_state["f6_riset_n"] = n + 1
     return hasil
 
-
-@st.cache_resource(show_spinner=False)
-def _buka_sheet_daftar() -> daftar_pesaing.SheetDaftar:
-    import gspread
-    gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
-    sh = gc.open_by_key(st.secrets["TASK_SHEET_ID"])
-    try:
-        ws = sh.worksheet(daftar_pesaing.NAMA_SHEET)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=daftar_pesaing.NAMA_SHEET, rows=200, cols=len(daftar_pesaing.HEADERS))
-        ws.update(range_name="A1:B1", values=[daftar_pesaing.HEADERS])
-    return daftar_pesaing.SheetDaftar(ws)
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def _baca_sheet_daftar(versi: int) -> dict:
-    return _buka_sheet_daftar().baca()
-
-
-def _baca_sheet() -> dict:
-    return _baca_sheet_daftar(st.session_state.get("f6_sheet_v", 0))
-
-
 def _laporan_pesaing(merk: str, d: Optional[daftar_pesaing.DaftarPesaing]) -> None:
     if d is None:
         st.caption("Pilih Merk, atau tekan 'Riset pesaing dengan AI', untuk menyusun daftar pesaing di pasar Indonesia.")
@@ -197,12 +174,6 @@ def _laporan_pesaing(merk: str, d: Optional[daftar_pesaing.DaftarPesaing]) -> No
         st.info(d.catatan)          # mis. "Kuota/batas permintaan Gemini sedang penuh... Memakai daftar tetap di Google Sheet"
     st.caption(f"Sumber daftar pesaing: {d.label}. " + (LABEL_RISET if d.asal in ("gemini", "cache_lama") else
                                                        "Daftar ini bisa diedit di kolom di atas."))
-
-
-def _editor_daftar(role: str, merk: str, pesaing: list[str]) -> None:
-    """Hanya manager/direktur (termasuk fauziah) yang boleh menyimpan daftar tetap ke Google Sheet."""
-    if not daftar_pesaing.boleh_edit(role):
-        return
 
 @_aman
 def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
@@ -228,7 +199,6 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
                                  help="Terisi otomatis oleh riset AI dan bisa diedit. Kosongkan bila tidak perlu pembanding.")
     pesaing = trends_fallback.bersihkan_pesaing(teks_pesaing, merk)
     _laporan_pesaing(merk, daftar if riset is not None else None)
-    _editor_daftar(role, merk, pesaing)
     kunci = f"pasar::{role}::{name}::{merk}::{'|'.join(pesaing)}"
     if muat:
         with st.spinner("Mengambil data pasar (Google Trends bisa memakan waktu beberapa detik)..."):
