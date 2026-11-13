@@ -6,8 +6,9 @@ di chat selalu identik dan hak akses (TLS + RLS) ikut berlaku:
   1. Tren pasar vs internal  -> tren_pasar_vs_internal   (indeks pencarian relatif vs omset mingguan per Merk)
   2. Forecast omset          -> prediksi_omset           (riwayat, prakiraan, interval 80%, baseline naif musiman)
 
-Anti-refresh: _panel_pasar dan _panel_forecast adalah @st.fragment, jadi menekan 'Terapkan Filter' atau mengganti Merk
-hanya me-rerun panel itu sendiri, bukan seluruh app.py (pola yang sama dengan render_pivot_fragment).
+Anti-refresh: semua filter (Merk, Pesaing, Cakupan, Horizon) ada DI DALAM st.form dan baru diproses saat tombol
+'Terapkan Filter' (st.form_submit_button) ditekan. Kedua panel juga @st.fragment, jadi tombol itu hanya me-rerun panel
+itu sendiri, bukan seluruh app.py (pola yang sama dengan render_pivot_fragment).
 
 Kecepatan dashboard: tab Streamlit tidak malas (semua tab dijalankan di setiap rerun), jadi perhitungan HANYA
 dijalankan saat tombol ditekan dan hasilnya disimpan di st.session_state. Tarikan Supabase di-cache 1 jam dan hasil
@@ -131,14 +132,19 @@ LABEL_RISET = ("Daftar pesaing dari pengetahuan AI (tanpa pencarian web), bukan 
                "Periksa dan edit sebelum dipakai untuk keputusan.")
 
 
-def _aktifkan_riset() -> None:
-    """on_change pemilih Merk: mulai sekarang Merk yang dipilih otomatis diriset (hasil di-cache beberapa jam)."""
-    st.session_state["f6_riset_aktif"] = True
+def _pada_terapkan() -> None:
+    """on_click tombol Terapkan Filter. Bila Merk yang diterapkan berganti, Merk baru otomatis diriset (hasil di-cache)."""
+    baru = st.session_state.get("f6_pasar_merk")
+    if baru is not None and baru != st.session_state.get("f6_merk_aktif"):
+        st.session_state["f6_riset_aktif"] = True
+    st.session_state["f6_merk_aktif"] = baru
 
 
-def _paksa_riset() -> None:
+def _pada_riset() -> None:
+    """on_click tombol Riset pesaing dengan AI: paksa riset ulang untuk Merk yang sedang diterapkan."""
     st.session_state["f6_riset_aktif"] = True
     st.session_state["f6_riset_paksa"] = True
+    st.session_state["f6_merk_aktif"] = st.session_state.get("f6_pasar_merk")
 
 
 def _klien_gemini() -> tuple:
@@ -206,7 +212,11 @@ def _laporan_pesaing(merk: str, d: Optional[daftar_pesaing.DaftarPesaing]) -> No
 def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
     st.caption("Menyandingkan indeks minat pencarian pasar dengan omset internal pada minggu yang sama. "
                + LABEL_DUGAAN)
-    merk = st.selectbox("Merk", merks, key="f6_pasar_merk", on_change=_aktifkan_riset)  # sengaja DI LUAR form
+    merk = st.session_state.get("f6_pasar_merk")          # nilai Merk yang terakhir DITERAPKAN (widget-nya ada di dalam form)
+    if merk not in merks:
+        merk = merks[0]
+        st.session_state["f6_pasar_merk"] = merk
+    st.session_state.setdefault("f6_merk_aktif", merk)
     riset = _riset_otomatis(merk)                       # None bila belum dipicu; hasil di-cache beberapa jam
     daftar = daftar_pesaing.tentukan(merk, riset, _baca_sheet)
     kunci_pesaing, kunci_seed = f"f6_pesaing_{merk}", f"f6_seed_{merk}"
@@ -217,14 +227,18 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
             st.session_state[kunci_seed] = riset.dibuat
     elif kunci_pesaing not in st.session_state:
         st.session_state[kunci_pesaing] = ", ".join(daftar.pesaing)
-    st.button("🔎 Riset pesaing dengan AI", key="f6_riset_btn", on_click=_paksa_riset,
-              help="Meminta AI menyebut pesaing (tanpa pencarian web). Hasil disimpan beberapa jam; mengulang "
-                   "baru bisa bila hasil lama berumur lebih dari 10 menit.")
     with st.form("f6_form_pasar"):
-        st.markdown("#### 🔎 Filter Pembanding (Batch Processing)")
+        st.markdown("#### 🔎 Filter Pasar (Batch Processing)")
+        st.selectbox("🎯 Pilih Merk:", merks, key="f6_pasar_merk")
         teks_pesaing = st.text_input("Pesaing untuk dibandingkan (pisahkan dengan koma, maksimal 4)", key=kunci_pesaing,
-                                     help="Terisi otomatis oleh riset AI dan bisa diedit. Kosongkan bila tidak perlu pembanding.")
-        muat = st.form_submit_button("🚀 Terapkan Filter (Muat Tren Pasar)", use_container_width=True)
+                                     help="Terisi otomatis oleh riset AI dan bisa diedit. Kosongkan bila tidak perlu pembanding. "
+                                          "Bila Merk diganti dan kolom ini tidak diubah, kolom diisi daftar Merk baru.")
+        c_riset, c_muat = st.columns([1, 2])
+        c_riset.form_submit_button("🔎 Riset pesaing dengan AI", on_click=_pada_riset, use_container_width=True,
+                                   help="Meminta AI menyebut pesaing (tanpa pencarian web). Hasil disimpan beberapa jam; "
+                                        "mengulang baru bisa bila hasil lama berumur lebih dari 10 menit.")
+        muat = c_muat.form_submit_button("🚀 Terapkan Filter (Muat Tren Pasar)", on_click=_pada_terapkan, type="primary",
+                                         use_container_width=True)
     pesaing = trends_fallback.bersihkan_pesaing(teks_pesaing, merk)
     _laporan_pesaing(merk, daftar if riset is not None else None)
     kunci = f"pasar::{role}::{name}::{merk}::{'|'.join(pesaing)}"
