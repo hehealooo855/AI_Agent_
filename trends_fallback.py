@@ -11,8 +11,10 @@ Streamlit tidak di-import di level modul.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import random
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -24,6 +26,8 @@ _log = logging.getLogger("ai_trends")
 
 KOLOM_SERI = ["series_date", "keyword", "brand", "value"]  # skema search_trend_series
 PETA_DEFAULT = {"Wardah": "wardah", "Emina": "emina", "Make Over": "make over", "Skintific": "skintific"}
+# Pesaing awal per Merk (CONTOH, silakan sesuaikan). Dipakai sebagai isi awal kolom "Pesaing" di panel.
+PESAING_DEFAULT = {"Kahf": ["garnier men", "nivea men", "vaseline men"]}
 PESAN_TRENDS_GAGAL = ("Data tren pencarian Google sedang dibatasi atau tidak dapat diakses. "
                       "Bagian lain tetap tersedia; coba lagi beberapa menit lagi.")
 
@@ -56,6 +60,23 @@ def df_kosong() -> pd.DataFrame:
     return pd.DataFrame({"series_date": pd.Series(dtype="datetime64[ns]"), "keyword": pd.Series(dtype="object"),
                          "brand": pd.Series(dtype="object"), "value": pd.Series(dtype="float64")})
 
+def _n(x: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(x).lower())
+
+
+def bersihkan_pesaing(teks: str, merk: str, cfg: TrendsConfig = TRENDS_CONFIG) -> list[str]:
+    """'a, b,, B' -> ['a', 'b']: tanpa duplikat, tanpa Merk itu sendiri, maksimal (batas Google - 1)."""
+    hasil: list[str] = []
+    for t in str(teks or "").split(","):
+        t = t.strip()
+        if t and _n(t) != _n(merk) and _n(t) not in {_n(h) for h in hasil}:
+            hasil.append(t)
+    return hasil[: cfg.maks_kata_kunci - 1]
+
+
+def peta_merk(merk: str, pesaing: list[str]) -> dict[str, str]:
+    """{label: kata kunci}; Merk & pesaing dalam SATU permintaan -> skala indeks Google sama (sebanding)."""
+    return {merk: merk.lower(), **{p: p.lower() for p in pesaing}}
 
 # ----------------------------------------------------------------------------- cache TTL (sukses & gagal)
 _cache: dict[Any, tuple[float, HasilTren]] = {}
@@ -145,35 +166,73 @@ def tampilkan_info_bila_gagal(hasil: HasilTren) -> None:
 
 # ----------------------------------------------------------------------------- adaptor sumber untuk ai_market_tools
 class SumberDenganFallback:
-    """Kueri 'seri_pencarian': Supabase dulu; bila galat/kosong -> pytrends. Kueri lain diteruskan apa adanya.
-    Bila keduanya gagal: galat ramah milik Supabase tetap dilempar (alat pasar mengubahnya jadi ok=False -> st.info),
+    """Kueri 'seri_pencarian':
+      1. Supabase dulu.
+      2. Supabase GALAT -> brand bawaan (peta) diambil dari Google Trends.
+      3. Dalam blok `merk_live(...)`: Merk yang diminta panel tetapi tidak ada di data -> diambil dari Google Trends.
+    Kueri lain diteruskan apa adanya. Bila semuanya gagal: galat ramah Supabase dilempar (alat pasar -> ok=False -> st.info)
     atau DataFrame kosong bila Supabase memang berhasil tetapi kosong."""
 
     def __init__(self, utama: Any, peta: Mapping[str, str] = PETA_DEFAULT, cfg: TrendsConfig = TRENDS_CONFIG):
         self.utama, self.peta, self.cfg = utama, dict(peta), cfg
+        self._lokal = threading.local()          # per sesi Streamlit (satu thread per sesi): tidak bocor antar pengguna
+
+    @contextlib.contextmanager
+    def merk_live(self, merk: str, pesaing: list[str]):
+        self._lokal.permintaan = (merk, list(pesaing))
+        try:
+            yield
+        finally:
+            self._lokal.permintaan = None
+
+    @staticmethod
+    def _potong(d: pd.DataFrame, param: dict) -> pd.DataFrame:
+        mulai, selesai = param.get("mulai"), param.get("selesai")
+        if mulai is not None:
+            d = d[d["series_date"] >= pd.Timestamp(mulai)]
+        if selesai is not None:
+            d = d[d["series_date"] <= pd.Timestamp(selesai)]
+        return d.head(int(param.get("batas", len(d)))).reset_index(drop=True)
+
+    def _tambah_merk_live(self, df: pd.DataFrame, param: dict) -> pd.DataFrame:
+        minta = getattr(self._lokal, "permintaan", None)
+        if not minta:
+            return df
+        merk, pesaing = minta
+        if _n(merk) in {_n(b) for b in df["brand"].dropna().astype(str)}:
+            return df                                   # sudah ada di Supabase
+        live = ambil_tren_google(peta_merk(merk, pesaing), self.cfg)
+        if live.ok and len(live.df):
+            baris = self._potong(live.df[live.df["brand"] == merk], param)
+            if len(baris):
+                return pd.concat([df, baris], ignore_index=True) if len(df) else baris
+        return df
 
     def tarik(self, kueri: str, **param) -> pd.DataFrame:
         if kueri != "seri_pencarian":
             return self.utama.tarik(kueri, **param)
         galat: Optional[Exception] = None
+        df = df_kosong()
         try:
-            df = self.utama.tarik(kueri, **param)
-            if df is not None and len(df):
-                return df
+            hasil = self.utama.tarik(kueri, **param)
+            if hasil is not None:
+                df = hasil
         except Exception as e:  # noqa: BLE001
             galat = e
-        cadangan = ambil_tren_google(self.peta, self.cfg)
-        if cadangan.ok and len(cadangan.df):
-            d = cadangan.df
-            mulai, selesai = param.get("mulai"), param.get("selesai")
-            if mulai is not None:
-                d = d[d["series_date"] >= pd.Timestamp(mulai)]
-            if selesai is not None:
-                d = d[d["series_date"] <= pd.Timestamp(selesai)]
-            return d.head(int(param.get("batas", len(d)))).reset_index(drop=True)
         if galat is not None:
+            cadangan = ambil_tren_google(self.peta, self.cfg)
+            if cadangan.ok and len(cadangan.df):
+                df = self._potong(cadangan.df, param)
+        df = self._tambah_merk_live(df, param)
+        if df.empty and galat is not None:
             raise galat
-        return df_kosong()
+        return df
+
+
+def konteks_merk(ai_market_tools: Any, merk: str, pesaing: list[str]):
+    """Dipakai panel: `with konteks_merk(ai_market_tools, merk, pesaing): jalankan alat`. Bila sumber bukan adaptor -> no-op."""
+    sumber = ai_market_tools._dapat_sumber()
+    return sumber.merk_live(merk, pesaing) if isinstance(sumber, SumberDenganFallback) else contextlib.nullcontext()
 
 
 def pasang_fallback(ai_market_tools: Any, peta: Optional[Mapping[str, str]] = None,
