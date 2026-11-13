@@ -2377,12 +2377,33 @@ def main_dashboard():
              render_custom_progress(f"👤 Target Tim {spv_name}", df_active['Jumlah'].sum(), target_pribadi)
         st.markdown("---")
 
-    t1, t2, t_detail_sales, t_detail_harian, t3, t5, t_forecast, t4, t_audit, t_ai = st.tabs(["📊 Rapor Brand", "📈 Tren Harian", "👥 Detail Tim", "📝 Detail Sales", "🏆 Top Produk", "🚀 Kejar Omset", "🔮 Prediksi Omset", "📋 Data Rincian", "⚠️ Audit Fakturis", "🤖 Asisten AI"])
+    t1, t2, t_detail_sales, t_detail_harian, t3, t5, t_forecast, t4, t_audit, t_ai, t_eval, t_pasar = st.tabs(["📊 Rapor Brand", "📈 Tren Harian", "👥 Detail Tim", "📝 Detail Sales", "🏆 Top Produk", "🚀 Kejar Omset", "🔮 Prediksi Omset", "📋 Data Rincian", "⚠️ Audit Fakturis", "🤖 Asisten AI", "📈 Evaluasi Tugas", "🌐 Pasar & Forecast"])
     
     with t_ai:
         import ai_tools, ai_chat
+        try:  # FASE 4: alat evaluasi tugas untuk Asisten AI (bila modul belum ada, dashboard tetap jalan)
+            import ai_tasks_eval_ui
+            ai_tasks_eval_ui.daftarkan_penyedia()
+        except ImportError:
+            pass
         cfg_ai = ai_tools.ToolsConfig(target_database=TARGET_DATABASE, individual_targets=INDIVIDUAL_TARGETS)
         ai_chat.render_asisten_ai(df, user_role, user_name, cfg_ai, catat=log_activity)
+
+    with t_eval:  # FASE 4
+        try:
+            import ai_tasks_eval_ui
+        except ImportError:
+            st.info("Modul evaluasi tugas (ai_tasks_eval_ui.py / ai_tasks_eval.py) belum ada di repo.")
+        else:
+            ai_tasks_eval_ui.render_evaluasi(df, user_role, user_name, cfg_ai)
+
+    with t_pasar:  # FASE 6: tren pasar vs internal + forecast omset
+        try:
+            import market_panel
+        except ImportError:
+            st.info("Modul panel pasar (market_panel.py) belum ada di repo.")
+        else:
+            market_panel.render_pasar_forecast(df, user_role, user_name, cfg_ai)
 
     with t1:
         if role in ['manager', 'direktur'] or my_name.lower() == 'fauziah': loop_source = TARGET_DATABASE.items()
