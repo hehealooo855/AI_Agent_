@@ -25,6 +25,7 @@ import ai_forecast  # noqa: F401  (import mendaftarkan prediksi_omset)
 import ai_market_tools  # noqa: F401  (import mendaftarkan alat pasar)
 import ai_chat
 import ai_pesaing
+import daftar_pesaing
 import ai_tools
 import trends_fallback
 _log = logging.getLogger("market_panel")
@@ -123,8 +124,8 @@ def _tampilkan_penolakan(h: dict) -> None:
 # ----------------------------------------------------------------------------- riset pesaing AI (FASE 6D)
 RISET_AWAL_OTOMATIS = False   # True: Merk awal juga diriset saat dashboard dibuka (lebih lambat)
 MAKS_RISET_SESI = 15          # pagar biaya: pencarian BARU (bukan dari cache) per sesi login
-LABEL_RISET = ("Hasil pencarian web oleh AI, bukan data internal. Harga dan promo cepat berubah dan bisa tidak lengkap: "
-               "cek tautan sumber sebelum dipakai untuk keputusan.")
+LABEL_RISET = ("Daftar pesaing dari pengetahuan AI (tanpa pencarian web), bukan data internal dan bisa tidak lengkap. "
+               "Periksa dan edit sebelum dipakai untuk keputusan.")
 
 
 def _aktifkan_riset() -> None:
@@ -159,34 +160,61 @@ def _riset_otomatis(merk: str) -> Optional[ai_pesaing.HasilPesaing]:
     if n >= MAKS_RISET_SESI:
         return ai_pesaing.HasilPesaing.gagal("batas_sesi", f"Batas {MAKS_RISET_SESI} riset baru per sesi tercapai. Login ulang "
                                                            "untuk melanjutkan, atau isi kolom Pesaing secara manual.")
-    with st.spinner(f"AI mencari pesaing {merk} di pasar Indonesia (pencarian web, bisa 10-30 detik)..."):
+    with st.spinner(f"AI menyusun daftar pesaing {merk} di pasar Indonesia..."):
         hasil = ai_pesaing.cari_pesaing(merk, klien, model, paksa=paksa)
     if not hasil.dari_cache:
         st.session_state["f6_riset_n"] = n + 1
     return hasil
 
 
-def _laporan_pesaing(merk: str, h: Optional[ai_pesaing.HasilPesaing]) -> None:
-    if h is None:
-        st.caption("Pilih Merk, atau tekan 'Riset pesaing dengan AI', untuk mencari pesaing di pasar Indonesia.")
+@st.cache_resource(show_spinner=False)
+def _buka_sheet_daftar() -> daftar_pesaing.SheetDaftar:
+    import gspread
+    gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+    sh = gc.open_by_key(st.secrets["TASK_SHEET_ID"])
+    try:
+        ws = sh.worksheet(daftar_pesaing.NAMA_SHEET)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=daftar_pesaing.NAMA_SHEET, rows=200, cols=len(daftar_pesaing.HEADERS))
+        ws.update(range_name="A1:B1", values=[daftar_pesaing.HEADERS])
+    return daftar_pesaing.SheetDaftar(ws)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _baca_sheet_daftar(versi: int) -> dict:
+    return _buka_sheet_daftar().baca()
+
+
+def _baca_sheet() -> dict:
+    return _baca_sheet_daftar(st.session_state.get("f6_sheet_v", 0))
+
+
+def _laporan_pesaing(merk: str, d: Optional[daftar_pesaing.DaftarPesaing]) -> None:
+    if d is None:
+        st.caption("Pilih Merk, atau tekan 'Riset pesaing dengan AI', untuk menyusun daftar pesaing di pasar Indonesia.")
         return
-    if not h.ok:
-        st.info(h.pesan)
+    if d.catatan:
+        st.info(d.catatan)          # mis. "Kuota/batas permintaan Gemini sedang penuh... Memakai daftar tetap di Google Sheet"
+    st.caption(f"Sumber daftar pesaing: {d.label}. " + (LABEL_RISET if d.asal in ("gemini", "cache_lama") else
+                                                       "Daftar ini bisa diedit di kolom di atas."))
+
+
+def _editor_daftar(role: str, merk: str, pesaing: list[str]) -> None:
+    """Hanya manager/direktur (termasuk fauziah) yang boleh menyimpan daftar tetap ke Google Sheet."""
+    if not daftar_pesaing.boleh_edit(role):
         return
-    with st.expander(f"Riset pesaing {merk} (AI + pencarian web, {ai_pesaing.umur_menit(h)} menit lalu)", expanded=True):
-        st.warning(LABEL_RISET)
-        if h.kategori:
-            st.caption(f"Kategori menurut AI: {h.kategori}")
-        for p in h.pesaing:
-            st.markdown(f"**{p['nama']}** - {p['alasan']}")
-            if p["berita_promo"]:
-                st.markdown("Berita & promo terbaru:\n" + "\n".join(f"- {b['ringkas']} ({b['waktu']})" for b in p["berita_promo"]))
-            if p["produk"]:
-                st.markdown("Produk andalan & kisaran harga:\n" + "\n".join(f"- {x['nama']}: {x['harga']}" for x in p["produk"]))
-        if h.sumber:
-            st.markdown("**Sumber:** " + " | ".join(f"[{s['judul']}]({s['uri']})" for s in h.sumber))
-        if h.kueri:
-            st.caption("Kata kunci pencarian AI: " + "; ".join(h.kueri))
+    with st.expander("Simpan sebagai daftar tetap (cadangan bila Gemini penuh)"):
+        st.caption(f"Menyimpan isi kolom Pesaing saat ini untuk {merk} ke sheet '{daftar_pesaing.NAMA_SHEET}'.")
+        if st.button("Simpan daftar tetap", key=f"f6_simpan_{merk}", disabled=not pesaing):
+            try:
+                _buka_sheet_daftar().simpan(merk, pesaing)
+                st.session_state["f6_sheet_v"] = st.session_state.get("f6_sheet_v", 0) + 1
+                st.success("Daftar tetap tersimpan.")
+            except Exception as e:  # noqa: BLE001
+                _log.warning("Simpan daftar pesaing gagal (tipe=%s)", type(e).__name__)
+                st.error("Gagal menyimpan ke Google Sheet. Periksa secrets gcp_service_account & TASK_SHEET_ID, "
+                         "dan share spreadsheet sebagai Editor ke service account.")
+
 
 @_aman
 def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
@@ -196,20 +224,23 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
     merk = c1.selectbox("Merk", merks, key="f6_pasar_merk", on_change=_aktifkan_riset)
     muat = c2.button("Muat tren pasar", key="f6_pasar_btn", use_container_width=True)
     riset = _riset_otomatis(merk)                       # None bila belum dipicu; hasil di-cache beberapa jam
+    daftar = daftar_pesaing.tentukan(merk, riset, _baca_sheet)
     kunci_pesaing, kunci_seed = f"f6_pesaing_{merk}", f"f6_seed_{merk}"
-    if riset is not None and riset.ok:                  # isi kolom HANYA sebelum widget dibuat; hasil baru menimpa isian lama
+    # isi kolom HANYA sebelum widget dibuat; hasil Gemini baru menimpa isian lama, selain itu hanya mengisi yang kosong
+    if riset is not None and riset.ok:
         if st.session_state.get(kunci_seed) != riset.dibuat or kunci_pesaing not in st.session_state:
-            st.session_state[kunci_pesaing] = ", ".join(p["nama"] for p in riset.pesaing)
+            st.session_state[kunci_pesaing] = ", ".join(daftar.pesaing)
             st.session_state[kunci_seed] = riset.dibuat
     elif kunci_pesaing not in st.session_state:
-        st.session_state[kunci_pesaing] = ", ".join(trends_fallback.PESAING_DEFAULT.get(merk, []))
+        st.session_state[kunci_pesaing] = ", ".join(daftar.pesaing)
     st.button("🔎 Riset pesaing dengan AI", key="f6_riset_btn", on_click=_paksa_riset,
-              help="Mencari pesaing, berita/promo, dan harga di web. Hasil disimpan beberapa jam; mengulang pencarian "
+              help="Meminta AI menyebut pesaing (tanpa pencarian web). Hasil disimpan beberapa jam; mengulang "
                    "baru bisa bila hasil lama berumur lebih dari 10 menit.")
     teks_pesaing = st.text_input("Pesaing untuk dibandingkan (pisahkan dengan koma, maksimal 4)", key=kunci_pesaing,
                                  help="Terisi otomatis oleh riset AI dan bisa diedit. Kosongkan bila tidak perlu pembanding.")
     pesaing = trends_fallback.bersihkan_pesaing(teks_pesaing, merk)
-    _laporan_pesaing(merk, riset)
+    _laporan_pesaing(merk, daftar if riset is not None else None)
+    _editor_daftar(role, merk, pesaing)
     kunci = f"pasar::{role}::{name}::{merk}::{'|'.join(pesaing)}"
     if muat:
         with st.spinner("Mengambil data pasar (Google Trends bisa memakan waktu beberapa detik)..."):
