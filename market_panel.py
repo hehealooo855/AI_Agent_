@@ -23,9 +23,10 @@ from plotly.subplots import make_subplots
 
 import ai_forecast  # noqa: F401  (import mendaftarkan prediksi_omset)
 import ai_market_tools  # noqa: F401  (import mendaftarkan alat pasar)
+import ai_chat
+import ai_pesaing
 import ai_tools
 import trends_fallback
-
 _log = logging.getLogger("market_panel")
 LABEL_DUGAAN = "Dugaan yang perlu dicek - bukan bukti sebab-akibat."
 
@@ -119,17 +120,96 @@ def _tampilkan_penolakan(h: dict) -> None:
     if "n_minggu" in h:
         st.caption(f"Histori omset: {h['n_minggu']} minggu (minimum {h.get('minimum_minggu', '-')} minggu).")
 
+# ----------------------------------------------------------------------------- riset pesaing AI (FASE 6D)
+RISET_AWAL_OTOMATIS = False   # True: Merk awal juga diriset saat dashboard dibuka (lebih lambat)
+MAKS_RISET_SESI = 15          # pagar biaya: pencarian BARU (bukan dari cache) per sesi login
+LABEL_RISET = ("Hasil pencarian web oleh AI, bukan data internal. Harga dan promo cepat berubah dan bisa tidak lengkap: "
+               "cek tautan sumber sebelum dipakai untuk keputusan.")
+
+
+def _aktifkan_riset() -> None:
+    """on_change pemilih Merk: mulai sekarang Merk yang dipilih otomatis diriset (hasil di-cache beberapa jam)."""
+    st.session_state["f6_riset_aktif"] = True
+
+
+def _paksa_riset() -> None:
+    st.session_state["f6_riset_aktif"] = True
+    st.session_state["f6_riset_paksa"] = True
+
+
+def _klien_gemini() -> tuple:
+    kunci = ai_chat._baca_secret("GEMINI_API_KEY")
+    if not kunci:
+        return None, ai_pesaing.MODEL_DEFAULT
+    return ai_chat._buat_client(kunci), (ai_chat._baca_secret("GEMINI_MODEL", ai_chat.MODEL_DEFAULT) or ai_chat.MODEL_DEFAULT)
+
+
+def _riset_otomatis(merk: str) -> Optional[ai_pesaing.HasilPesaing]:
+    """None = belum dipicu. Selain itu HasilPesaing (ok atau gagal dengan pesan ramah). Tidak pernah melempar error."""
+    paksa = bool(st.session_state.pop("f6_riset_paksa", False))
+    if not (paksa or st.session_state.get("f6_riset_aktif") or RISET_AWAL_OTOMATIS):
+        return None
+    klien, model = _klien_gemini()
+    if klien is None:
+        return ai_pesaing.HasilPesaing.gagal("tanpa_kunci", "Riset pesaing AI belum aktif: GEMINI_API_KEY belum diatur di "
+                                                            "secrets. Isi kolom Pesaing secara manual.")
+    if not paksa and ai_pesaing.di_cache(merk, model):
+        return ai_pesaing.cari_pesaing(merk, klien, model)                       # cache: instan, tanpa biaya
+    n = st.session_state.get("f6_riset_n", 0)
+    if n >= MAKS_RISET_SESI:
+        return ai_pesaing.HasilPesaing.gagal("batas_sesi", f"Batas {MAKS_RISET_SESI} riset baru per sesi tercapai. Login ulang "
+                                                           "untuk melanjutkan, atau isi kolom Pesaing secara manual.")
+    with st.spinner(f"AI mencari pesaing {merk} di pasar Indonesia (pencarian web, bisa 10-30 detik)..."):
+        hasil = ai_pesaing.cari_pesaing(merk, klien, model, paksa=paksa)
+    if not hasil.dari_cache:
+        st.session_state["f6_riset_n"] = n + 1
+    return hasil
+
+
+def _laporan_pesaing(merk: str, h: Optional[ai_pesaing.HasilPesaing]) -> None:
+    if h is None:
+        st.caption("Pilih Merk, atau tekan 'Riset pesaing dengan AI', untuk mencari pesaing di pasar Indonesia.")
+        return
+    if not h.ok:
+        st.info(h.pesan)
+        return
+    with st.expander(f"Riset pesaing {merk} (AI + pencarian web, {ai_pesaing.umur_menit(h)} menit lalu)", expanded=True):
+        st.warning(LABEL_RISET)
+        if h.kategori:
+            st.caption(f"Kategori menurut AI: {h.kategori}")
+        for p in h.pesaing:
+            st.markdown(f"**{p['nama']}** - {p['alasan']}")
+            if p["berita_promo"]:
+                st.markdown("Berita & promo terbaru:\n" + "\n".join(f"- {b['ringkas']} ({b['waktu']})" for b in p["berita_promo"]))
+            if p["produk"]:
+                st.markdown("Produk andalan & kisaran harga:\n" + "\n".join(f"- {x['nama']}: {x['harga']}" for x in p["produk"]))
+        if h.sumber:
+            st.markdown("**Sumber:** " + " | ".join(f"[{s['judul']}]({s['uri']})" for s in h.sumber))
+        if h.kueri:
+            st.caption("Kata kunci pencarian AI: " + "; ".join(h.kueri))
+
 @_aman
 def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
     st.caption("Menyandingkan indeks minat pencarian pasar dengan omset internal pada minggu yang sama. "
                + LABEL_DUGAAN)
     c1, c2 = st.columns([2, 1])
-    merk = c1.selectbox("Merk", merks, key="f6_pasar_merk")
+    merk = c1.selectbox("Merk", merks, key="f6_pasar_merk", on_change=_aktifkan_riset)
     muat = c2.button("Muat tren pasar", key="f6_pasar_btn", use_container_width=True)
-    teks_pesaing = st.text_input("Pesaing untuk dibandingkan (pisahkan dengan koma, maksimal 4)",
-                                 value=", ".join(trends_fallback.PESAING_DEFAULT.get(merk, [])),
-                                 key=f"f6_pesaing_{merk}", help="Kosongkan bila tidak perlu pembanding.")
+    riset = _riset_otomatis(merk)                       # None bila belum dipicu; hasil di-cache beberapa jam
+    kunci_pesaing, kunci_seed = f"f6_pesaing_{merk}", f"f6_seed_{merk}"
+    if riset is not None and riset.ok:                  # isi kolom HANYA sebelum widget dibuat; hasil baru menimpa isian lama
+        if st.session_state.get(kunci_seed) != riset.dibuat or kunci_pesaing not in st.session_state:
+            st.session_state[kunci_pesaing] = ", ".join(p["nama"] for p in riset.pesaing)
+            st.session_state[kunci_seed] = riset.dibuat
+    elif kunci_pesaing not in st.session_state:
+        st.session_state[kunci_pesaing] = ", ".join(trends_fallback.PESAING_DEFAULT.get(merk, []))
+    st.button("🔎 Riset pesaing dengan AI", key="f6_riset_btn", on_click=_paksa_riset,
+              help="Mencari pesaing, berita/promo, dan harga di web. Hasil disimpan beberapa jam; mengulang pencarian "
+                   "baru bisa bila hasil lama berumur lebih dari 10 menit.")
+    teks_pesaing = st.text_input("Pesaing untuk dibandingkan (pisahkan dengan koma, maksimal 4)", key=kunci_pesaing,
+                                 help="Terisi otomatis oleh riset AI dan bisa diedit. Kosongkan bila tidak perlu pembanding.")
     pesaing = trends_fallback.bersihkan_pesaing(teks_pesaing, merk)
+    _laporan_pesaing(merk, riset)
     kunci = f"pasar::{role}::{name}::{merk}::{'|'.join(pesaing)}"
     if muat:
         with st.spinner("Mengambil data pasar (Google Trends bisa memakan waktu beberapa detik)..."):
