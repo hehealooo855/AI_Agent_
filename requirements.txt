@@ -17,4 +17,5 @@ pymysql
 SQLAlchemy>=2.0
 psycopg2-binary>=2.9
 statsmodels>=0.14.2
+pytrends
 pytest>=8.0
