@@ -6,6 +6,9 @@ di chat selalu identik dan hak akses (TLS + RLS) ikut berlaku:
   1. Tren pasar vs internal  -> tren_pasar_vs_internal   (indeks pencarian relatif vs omset mingguan per Merk)
   2. Forecast omset          -> prediksi_omset           (riwayat, prakiraan, interval 80%, baseline naif musiman)
 
+Anti-refresh: _panel_pasar dan _panel_forecast adalah @st.fragment, jadi menekan 'Terapkan Filter' atau mengganti Merk
+hanya me-rerun panel itu sendiri, bukan seluruh app.py (pola yang sama dengan render_pivot_fragment).
+
 Kecepatan dashboard: tab Streamlit tidak malas (semua tab dijalankan di setiap rerun), jadi perhitungan HANYA
 dijalankan saat tombol ditekan dan hasilnya disimpan di st.session_state. Tarikan Supabase di-cache 1 jam dan hasil
 forecast 6 jam di dalam alatnya; rerun karena widget lain tidak memicu perhitungan ulang.
@@ -198,6 +201,7 @@ def _laporan_pesaing(merk: str, d: Optional[daftar_pesaing.DaftarPesaing]) -> No
     st.caption(f"Sumber daftar pesaing: {d.label}. " + (LABEL_RISET if d.asal in ("gemini", "cache_lama") else
                                                        "Daftar ini bisa diedit di kolom di atas."))
 
+@st.fragment
 @_aman
 def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
     st.caption("Menyandingkan indeks minat pencarian pasar dengan omset internal pada minggu yang sama. "
@@ -217,9 +221,10 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
               help="Meminta AI menyebut pesaing (tanpa pencarian web). Hasil disimpan beberapa jam; mengulang "
                    "baru bisa bila hasil lama berumur lebih dari 10 menit.")
     with st.form("f6_form_pasar"):
+        st.markdown("#### 🔎 Filter Pembanding (Batch Processing)")
         teks_pesaing = st.text_input("Pesaing untuk dibandingkan (pisahkan dengan koma, maksimal 4)", key=kunci_pesaing,
                                      help="Terisi otomatis oleh riset AI dan bisa diedit. Kosongkan bila tidak perlu pembanding.")
-        muat = st.form_submit_button("Muat tren pasar", use_container_width=True)
+        muat = st.form_submit_button("🚀 Terapkan Filter (Muat Tren Pasar)", use_container_width=True)
     pesaing = trends_fallback.bersihkan_pesaing(teks_pesaing, merk)
     _laporan_pesaing(merk, daftar if riset is not None else None)
     kunci = f"pasar::{role}::{name}::{merk}::{'|'.join(pesaing)}"
@@ -234,7 +239,7 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
     h = _ambil(kunci)
     live = _ambil(kunci + "::live")
     if h is None:
-        st.info("Tekan 'Muat tren pasar' untuk mengambil data (tidak dihitung otomatis agar dashboard tetap cepat).")
+        st.info("Tekan 'Terapkan Filter (Muat Tren Pasar)' untuk mengambil data (tidak dihitung otomatis agar dashboard tetap cepat).")
         return
     if not h.get("ok"):
         if h.get("kode") == "tanpa_pemetaan" and live and live["pesan"]:
@@ -261,15 +266,17 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
             st.markdown(f"- Korelasi peringkat perubahan mingguan: {h['korelasi_perubahan_mingguan']} "
                         f"(n={h['n_pasangan_korelasi']}); sangat tidak stabil bila n kecil.")
 
+@st.fragment
 @_aman
 def _panel_forecast(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
     st.caption("Prakiraan omset mingguan (ETS, statsmodels) dengan backtest rolling-origin dan pembanding baseline naif "
                "musiman. Prakiraan bukan target atau janji.")
     with st.form("f6_form_fc"):
-        c1, c2, c3 = st.columns([2, 1, 1])
+        st.markdown("#### 🔎 Filter Forecast (Batch Processing)")
+        c1, c2 = st.columns([2, 1])
         pilihan = c1.selectbox("Cakupan", ["(Semua yang dapat diakses)"] + merks, key="f6_fc_merk")
         horizon = c2.slider("Horizon (minggu)", 1, 8, 4, key="f6_fc_h")
-        hitung = c3.form_submit_button("Hitung forecast", use_container_width=True)
+        hitung = st.form_submit_button("🚀 Terapkan Filter (Hitung Forecast)", use_container_width=True)
     merk: Optional[str] = None if pilihan.startswith("(") else pilihan
     kunci = f"fc::{role}::{name}::{merk}::{horizon}"
     if hitung:
@@ -277,7 +284,7 @@ def _panel_forecast(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsC
             _simpan(kunci, _jalankan("prediksi_omset", df, role, name, cfg, merk=merk, horizon_minggu=horizon))
     h = _ambil(kunci)
     if h is None:
-        st.info("Tekan 'Hitung forecast' untuk menjalankan (tidak dihitung otomatis agar dashboard tetap cepat).")
+        st.info("Tekan 'Terapkan Filter (Hitung Forecast)' untuk menjalankan (tidak dihitung otomatis agar dashboard tetap cepat).")
         return
     if not h.get("ok"):
         _tampilkan_penolakan(h)
