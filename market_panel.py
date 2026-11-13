@@ -76,6 +76,20 @@ def grafik_forecast(h: dict) -> go.Figure:
                       legend=dict(orientation="h", y=-0.2), margin=dict(t=50, b=10))
     return fig
 
+def grafik_pesaing(d: pd.DataFrame, merk: str) -> go.Figure:
+    """Indeks pencarian Google mingguan: Merk vs pesaing, diambil dalam SATU permintaan (skala sama)."""
+    g = d.assign(minggu=d["series_date"] - pd.to_timedelta(d["series_date"].dt.weekday, unit="D"))
+    g = g.groupby(["minggu", "brand"])["value"].agg(["mean", "count"]).reset_index()
+    g = g[g["count"] >= 4]                                  # hanya minggu lengkap
+    fig = go.Figure()
+    for b, s in g.groupby("brand"):
+        fig.add_scatter(x=s["minggu"], y=s["mean"].round(1), name=b, mode="lines+markers",
+                        line=dict(width=4 if b == merk else 2))
+    fig.update_layout(title=f"{merk} vs pesaing: indeks pencarian Google (relatif, skala sama)",
+                      yaxis_title="Indeks pencarian (0-100)", legend=dict(orientation="h", y=-0.2),
+                      margin=dict(t=50, b=10))
+    return fig
+
 def _aman(fn):
     """Panel tidak boleh menampilkan error merah: galat tak terduga -> st.info."""
     @functools.wraps(fn)
@@ -112,16 +126,29 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
     c1, c2 = st.columns([2, 1])
     merk = c1.selectbox("Merk", merks, key="f6_pasar_merk")
     muat = c2.button("Muat tren pasar", key="f6_pasar_btn", use_container_width=True)
-    kunci = f"pasar::{role}::{name}::{merk}"
+    teks_pesaing = st.text_input("Pesaing untuk dibandingkan (pisahkan dengan koma, maksimal 4)",
+                                 value=", ".join(trends_fallback.PESAING_DEFAULT.get(merk, [])),
+                                 key=f"f6_pesaing_{merk}", help="Kosongkan bila tidak perlu pembanding.")
+    pesaing = trends_fallback.bersihkan_pesaing(teks_pesaing, merk)
+    kunci = f"pasar::{role}::{name}::{merk}::{'|'.join(pesaing)}"
     if muat:
-        with st.spinner("Mengambil data pasar..."):
-            _simpan(kunci, _jalankan("tren_pasar_vs_internal", df, role, name, cfg, merk=merk))
+        with st.spinner("Mengambil data pasar (Google Trends bisa memakan waktu beberapa detik)..."):
+            with trends_fallback.konteks_merk(ai_market_tools, merk, pesaing):
+                hasil = _jalankan("tren_pasar_vs_internal", df, role, name, cfg, merk=merk)
+            _simpan(kunci, hasil)
+            if hasil.get("ok") or hasil.get("kode") == "tanpa_pemetaan":   # hasil live sudah di-cache, tidak mengambil ulang
+                live = trends_fallback.ambil_tren_google(trends_fallback.peta_merk(merk, pesaing))
+                _simpan(kunci + "::live", {"df": live.df, "ok": live.ok, "pesan": live.pesan})
     h = _ambil(kunci)
+    live = _ambil(kunci + "::live")
     if h is None:
         st.info("Tekan 'Muat tren pasar' untuk mengambil data (tidak dihitung otomatis agar dashboard tetap cepat).")
         return
     if not h.get("ok"):
-        _tampilkan_penolakan(h)
+        if h.get("kode") == "tanpa_pemetaan" and live and live["pesan"]:
+            st.info(live["pesan"])                  # Google dibatasi / tidak ada data -> pesan yang benar
+        else:
+            _tampilkan_penolakan(h)
         return
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Minggu yang sama", h["n_minggu_sama"])
@@ -129,6 +156,10 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
     m3.metric("Perubahan omset internal", _pct(h["perubahan_omset_internal_persen"]))
     m4.metric("Arah", h["arah_perubahan"].split(" (")[0])
     st.plotly_chart(grafik_pasar_vs_internal(h), use_container_width=True)
+    if pesaing and live and live["ok"] and len(live["df"]):
+        st.plotly_chart(grafik_pesaing(live["df"], merk), use_container_width=True)
+    elif pesaing:
+        st.info("Pembanding pesaing belum tersedia: Google Trends sedang dibatasi atau tidak ada data. Coba lagi nanti.")
     st.warning(f"{h['pernyataan']}  Kekuatan bukti: {h['kekuatan_bukti']}. "
                f"Histori pasar: {h['status_data']['histori_hari']} hari.")
     with st.expander("Batasan & catatan data"):
