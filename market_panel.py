@@ -12,6 +12,8 @@ forecast 6 jam di dalam alatnya; rerun karena widget lain tidak memicu perhitung
 """
 from __future__ import annotations
 
+import functools
+import logging
 from typing import Optional
 
 import pandas as pd
@@ -22,9 +24,10 @@ from plotly.subplots import make_subplots
 import ai_forecast  # noqa: F401  (import mendaftarkan prediksi_omset)
 import ai_market_tools  # noqa: F401  (import mendaftarkan alat pasar)
 import ai_tools
+import trends_fallback
 
+_log = logging.getLogger("market_panel")
 LABEL_DUGAAN = "Dugaan yang perlu dicek - bukan bukti sebab-akibat."
-
 
 def _jalankan(nama: str, df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, **arg) -> dict:
     return ai_tools.jalankan_tool(nama, arg, df=df, role=role, sales_name=name, config=cfg)
@@ -73,6 +76,17 @@ def grafik_forecast(h: dict) -> go.Figure:
                       legend=dict(orientation="h", y=-0.2), margin=dict(t=50, b=10))
     return fig
 
+def _aman(fn):
+    """Panel tidak boleh menampilkan error merah: galat tak terduga -> st.info."""
+    @functools.wraps(fn)
+    def pembungkus(*a, **k):
+        try:
+            fn(*a, **k)
+        except Exception as e:  # noqa: BLE001
+            _log.warning("Panel %s gagal (tipe=%s)", fn.__name__, type(e).__name__)
+            st.info("Data pasar sedang tidak dapat ditampilkan. Bagian lain dashboard tetap berfungsi; "
+                    "coba lagi beberapa saat lagi.")
+    return pembungkus
 
 # ----------------------------------------------------------------------------- panel
 def _simpan(kunci: str, nilai: dict) -> None:
@@ -91,7 +105,7 @@ def _tampilkan_penolakan(h: dict) -> None:
     if "n_minggu" in h:
         st.caption(f"Histori omset: {h['n_minggu']} minggu (minimum {h.get('minimum_minggu', '-')} minggu).")
 
-
+@_aman
 def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
     st.caption("Menyandingkan indeks minat pencarian pasar dengan omset internal pada minggu yang sama. "
                + LABEL_DUGAAN)
@@ -124,7 +138,7 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
             st.markdown(f"- Korelasi peringkat perubahan mingguan: {h['korelasi_perubahan_mingguan']} "
                         f"(n={h['n_pasangan_korelasi']}); sangat tidak stabil bila n kecil.")
 
-
+@_aman
 def _panel_forecast(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
     st.caption("Prakiraan omset mingguan (ETS, statsmodels) dengan backtest rolling-origin dan pembanding baseline naif "
                "musiman. Prakiraan bukan target atau janji.")
@@ -177,6 +191,7 @@ def render_pasar_forecast(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.
     except ai_tools.ToolError as e:
         st.info(str(e))
         return
+    trends_fallback.pasang_fallback(ai_market_tools)  # Supabase dulu, Google Trends cadangan
     merks = konteks["merk"]
     if not merks:
         st.info("Belum ada Merk pada data yang dapat Anda akses.")
