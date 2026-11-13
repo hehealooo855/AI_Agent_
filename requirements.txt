@@ -1,6 +1,7 @@
 streamlit>=1.30.0
 streamlit-aggrid==1.0.5
 pandas
+numpy
 plotly
 pytz
 pyotp
@@ -9,11 +10,11 @@ pillow
 xlsxwriter
 pyarrow
 google-genai
-gspread
-pymysql
-SQLAlchemy
 google-generativeai
 gspread
 oauth2client
-pandas
-streamlit
+pymysql
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+statsmodels>=0.14.2
+pytest>=8.0
