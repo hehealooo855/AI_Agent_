@@ -212,8 +212,7 @@ def _editor_daftar(role: str, merk: str, pesaing: list[str]) -> None:
                 st.success("Daftar tetap tersimpan.")
             except Exception as e:  # noqa: BLE001
                 _log.warning("Simpan daftar pesaing gagal (tipe=%s)", type(e).__name__)
-                st.error("Gagal menyimpan ke Google Sheet. Periksa secrets gcp_service_account & TASK_SHEET_ID, "
-                         "dan share spreadsheet sebagai Editor ke service account.")
+                st.error("Gagal menyimpan ke Google Sheet. " + daftar_pesaing.jelaskan_galat(e))
 
 
 @_aman
