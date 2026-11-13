@@ -202,9 +202,7 @@ def _laporan_pesaing(merk: str, d: Optional[daftar_pesaing.DaftarPesaing]) -> No
 def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
     st.caption("Menyandingkan indeks minat pencarian pasar dengan omset internal pada minggu yang sama. "
                + LABEL_DUGAAN)
-    c1, c2 = st.columns([2, 1])
-    merk = c1.selectbox("Merk", merks, key="f6_pasar_merk", on_change=_aktifkan_riset)
-    muat = c2.button("Muat tren pasar", key="f6_pasar_btn", use_container_width=True)
+    merk = st.selectbox("Merk", merks, key="f6_pasar_merk", on_change=_aktifkan_riset)  # sengaja DI LUAR form
     riset = _riset_otomatis(merk)                       # None bila belum dipicu; hasil di-cache beberapa jam
     daftar = daftar_pesaing.tentukan(merk, riset, _baca_sheet)
     kunci_pesaing, kunci_seed = f"f6_pesaing_{merk}", f"f6_seed_{merk}"
@@ -218,8 +216,10 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
     st.button("🔎 Riset pesaing dengan AI", key="f6_riset_btn", on_click=_paksa_riset,
               help="Meminta AI menyebut pesaing (tanpa pencarian web). Hasil disimpan beberapa jam; mengulang "
                    "baru bisa bila hasil lama berumur lebih dari 10 menit.")
-    teks_pesaing = st.text_input("Pesaing untuk dibandingkan (pisahkan dengan koma, maksimal 4)", key=kunci_pesaing,
-                                 help="Terisi otomatis oleh riset AI dan bisa diedit. Kosongkan bila tidak perlu pembanding.")
+    with st.form("f6_form_pasar"):
+        teks_pesaing = st.text_input("Pesaing untuk dibandingkan (pisahkan dengan koma, maksimal 4)", key=kunci_pesaing,
+                                     help="Terisi otomatis oleh riset AI dan bisa diedit. Kosongkan bila tidak perlu pembanding.")
+        muat = st.form_submit_button("Muat tren pasar", use_container_width=True)
     pesaing = trends_fallback.bersihkan_pesaing(teks_pesaing, merk)
     _laporan_pesaing(merk, daftar if riset is not None else None)
     kunci = f"pasar::{role}::{name}::{merk}::{'|'.join(pesaing)}"
@@ -265,10 +265,11 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
 def _panel_forecast(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
     st.caption("Prakiraan omset mingguan (ETS, statsmodels) dengan backtest rolling-origin dan pembanding baseline naif "
                "musiman. Prakiraan bukan target atau janji.")
-    c1, c2, c3 = st.columns([2, 1, 1])
-    pilihan = c1.selectbox("Cakupan", ["(Semua yang dapat diakses)"] + merks, key="f6_fc_merk")
-    horizon = c2.slider("Horizon (minggu)", 1, 8, 4, key="f6_fc_h")
-    hitung = c3.button("Hitung forecast", key="f6_fc_btn", use_container_width=True)
+    with st.form("f6_form_fc"):
+        c1, c2, c3 = st.columns([2, 1, 1])
+        pilihan = c1.selectbox("Cakupan", ["(Semua yang dapat diakses)"] + merks, key="f6_fc_merk")
+        horizon = c2.slider("Horizon (minggu)", 1, 8, 4, key="f6_fc_h")
+        hitung = c3.form_submit_button("Hitung forecast", use_container_width=True)
     merk: Optional[str] = None if pilihan.startswith("(") else pilihan
     kunci = f"fc::{role}::{name}::{merk}::{horizon}"
     if hitung:
