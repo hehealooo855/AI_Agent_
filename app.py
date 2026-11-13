@@ -2377,6 +2377,16 @@ def main_dashboard():
              render_custom_progress(f"👤 Target Tim {spv_name}", df_active['Jumlah'].sum(), target_pribadi)
         st.markdown("---")
 
+    def _tampilkan_galat_modul(nama_file, e):
+        """Tampilkan penyebab ASLI gagal impor (bukan sekadar 'belum ada di repo')."""
+        import traceback
+        if isinstance(e, ModuleNotFoundError) and (e.name or "") == nama_file:
+            st.error(f"File `{nama_file}.py` tidak ditemukan di folder yang sama dengan app.py di repo/deploy.")
+        else:
+            st.error(f"`{nama_file}.py` ada, tetapi GAGAL dimuat: {type(e).__name__}: {e}")
+        with st.expander("Detail teknis (kirim ke developer)"):
+            st.code(traceback.format_exc())
+
     t1, t2, t_detail_sales, t_detail_harian, t3, t5, t_forecast, t4, t_audit, t_ai, t_eval, t_pasar = st.tabs(["📊 Rapor Brand", "📈 Tren Harian", "👥 Detail Tim", "📝 Detail Sales", "🏆 Top Produk", "🚀 Kejar Omset", "🔮 Prediksi Omset", "📋 Data Rincian", "⚠️ Audit Fakturis", "🤖 Asisten AI", "📈 Evaluasi Tugas", "🌐 Pasar & Forecast"])
     
     with t_ai:
@@ -2392,16 +2402,16 @@ def main_dashboard():
     with t_eval:  # FASE 4
         try:
             import ai_tasks_eval_ui
-        except ImportError:
-            st.info("Modul evaluasi tugas (ai_tasks_eval_ui.py / ai_tasks_eval.py) belum ada di repo.")
+        except Exception as e_eval:  # tampilkan penyebab asli
+            _tampilkan_galat_modul("ai_tasks_eval_ui", e_eval)
         else:
             ai_tasks_eval_ui.render_evaluasi(df, user_role, user_name, cfg_ai)
 
     with t_pasar:  # FASE 6: tren pasar vs internal + forecast omset
         try:
             import market_panel
-        except ImportError:
-            st.info("Modul panel pasar (market_panel.py) belum ada di repo.")
+        except Exception as e_pasar:  # tampilkan penyebab asli
+            _tampilkan_galat_modul("market_panel", e_pasar)
         else:
             market_panel.render_pasar_forecast(df, user_role, user_name, cfg_ai)
 
