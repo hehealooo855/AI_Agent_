@@ -90,6 +90,26 @@ class SheetDaftar:
         self.ws.append_row([merk, nilai])
 
 
+def jelaskan_galat(e: Exception) -> str:
+    """Petunjuk ramah dari JENIS galat saja (teks mentah/secret tidak pernah ditampilkan)."""
+    tipe = type(e).__name__
+    kode = getattr(getattr(e, "response", None), "status_code", None)
+    if tipe == "KeyError":
+        petunjuk = "Secret belum ada di secrets.toml (gcp_service_account atau TASK_SHEET_ID)."
+    elif tipe == "SpreadsheetNotFound" or kode == 404:
+        petunjuk = "Spreadsheet tidak ditemukan: periksa TASK_SHEET_ID dan share ke email service account."
+    elif kode == 403:
+        petunjuk = ("Akses ditolak: share spreadsheet sebagai Editor ke email service account, dan pastikan "
+                    "Google Sheets API aktif di project Google Cloud.")
+    elif kode == 429:
+        petunjuk = "Batas permintaan Google Sheets sedang penuh. Coba lagi semenit lagi."
+    elif tipe == "ModuleNotFoundError":
+        petunjuk = "Library gspread belum terpasang (pip install gspread)."
+    else:
+        petunjuk = "Penyebab tidak dikenali."
+    return f"{petunjuk} (jenis galat: {tipe}{f', kode {kode}' if kode else ''})"
+
+
 @dataclass(frozen=True)
 class DaftarPesaing:
     pesaing: tuple
