@@ -199,6 +199,7 @@ def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConf
                                  help="Terisi otomatis oleh riset AI dan bisa diedit. Kosongkan bila tidak perlu pembanding.")
     pesaing = trends_fallback.bersihkan_pesaing(teks_pesaing, merk)
     _laporan_pesaing(merk, daftar if riset is not None else None)
+    _editor_daftar(role, merk, pesaing)
     kunci = f"pasar::{role}::{name}::{merk}::{'|'.join(pesaing)}"
     if muat:
         with st.spinner("Mengambil data pasar (Google Trends bisa memakan waktu beberapa detik)..."):
