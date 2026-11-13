@@ -203,17 +203,6 @@ def _editor_daftar(role: str, merk: str, pesaing: list[str]) -> None:
     """Hanya manager/direktur (termasuk fauziah) yang boleh menyimpan daftar tetap ke Google Sheet."""
     if not daftar_pesaing.boleh_edit(role):
         return
-    with st.expander("Simpan sebagai daftar tetap (cadangan bila Gemini penuh)"):
-        st.caption(f"Menyimpan isi kolom Pesaing saat ini untuk {merk} ke sheet '{daftar_pesaing.NAMA_SHEET}'.")
-        if st.button("Simpan daftar tetap", key=f"f6_simpan_{merk}", disabled=not pesaing):
-            try:
-                _buka_sheet_daftar().simpan(merk, pesaing)
-                st.session_state["f6_sheet_v"] = st.session_state.get("f6_sheet_v", 0) + 1
-                st.success("Daftar tetap tersimpan.")
-            except Exception as e:  # noqa: BLE001
-                _log.warning("Simpan daftar pesaing gagal (tipe=%s)", type(e).__name__)
-                st.error("Gagal menyimpan ke Google Sheet. " + daftar_pesaing.jelaskan_galat(e))
-
 
 @_aman
 def _panel_pasar(df: pd.DataFrame, role: str, name: str, cfg: ai_tools.ToolsConfig, merks: list[str]) -> None:
