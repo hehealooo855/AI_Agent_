@@ -2203,7 +2203,7 @@ def main_dashboard():
 
     if is_full_access:
         st.markdown("### 👤 User")
-        list_ijl = ["IJL"] + list(TARGET_DATABASE.keys())
+        list_ijl = ["MSS"] + list(TARGET_DATABASE.keys())
         selected_ijl = st.selectbox("Pilih User Dashboard:", list_ijl, index=0)
         
     # 2. Jika user adalah Supervisor, kunci menu hanya untuk namanya sendiri
@@ -2361,7 +2361,7 @@ def main_dashboard():
                 title = f"🏢 Target {selected_ijl}"
             else:
                 target_val = TARGET_NASIONAL_VAL
-                title = "🏢 Target IJL (All Team)"
+                title = "🏢 Target MSS (All Team)"
             
             realisasi = df_active['Jumlah'].sum()
             render_custom_progress(title, realisasi, target_val)
