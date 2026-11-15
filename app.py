@@ -16,6 +16,7 @@ from calendar import monthrange
 from itertools import combinations
 from collections import Counter
 import calendar
+import visit_plan_store
 import concurrent.futures
 import streamlit.components.v1 as components 
 
@@ -1662,6 +1663,72 @@ def generate_pivot_fast(df_pivot_source, selected_merk_excel, selected_tahun_exc
         return master_pivot
     return pd.DataFrame()
 
+MVP_SHEET_NAME = "RuteKunjungan"
+MVP_HEADERS = ["outlet", "route", "step5", "action", "followup", "diubah_oleh", "diubah_pada"]
+MVP_ACTION_DEFAULT = "Cek Stok & Penawaran Baru"
+
+
+@st.cache_resource(show_spinner=False)
+def _mvp_buka_ws():
+    """Worksheet 'RuteKunjungan' di spreadsheet TASK_SHEET_ID (dibuat otomatis bila belum ada)."""
+    import gspread
+    gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+    sh = gc.open_by_key(st.secrets["TASK_SHEET_ID"])
+    try:
+        ws = sh.worksheet(MVP_SHEET_NAME)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=MVP_SHEET_NAME, rows=5000, cols=len(MVP_HEADERS))
+    if ws.row_values(1)[:len(MVP_HEADERS)] != MVP_HEADERS:
+        ws.update(range_name="A1:G1", values=[MVP_HEADERS])
+    return ws
+
+
+def _mvp_bool(v):
+    return str(v).strip().upper() in ("1", "TRUE", "YA", "Y")
+
+
+def mvp_muat_dari_sheet():
+    """Baca semua rute tersimpan -> {nama_outlet: {route, step5, action, followup}}."""
+    baris = _mvp_buka_ws().get_all_values()
+    hasil = {}
+    for r in baris[1:]:
+        r = (list(r) + [""] * len(MVP_HEADERS))[:len(MVP_HEADERS)]
+        if not r[0].strip():
+            continue
+        hasil[r[0]] = {
+            'route': r[1],
+            'step5': _mvp_bool(r[2]),
+            'action': r[3] or MVP_ACTION_DEFAULT,
+            'followup': _mvp_bool(r[4]),
+        }
+    return hasil
+
+
+def mvp_simpan_ke_sheet(perubahan, user):
+    """Upsert per Nama Outlet. `perubahan` = {nama_outlet: {route, step5, action, followup}} (hanya yang berubah)."""
+    if not perubahan:
+        return 0
+    ws = _mvp_buka_ws()
+    nomor = {}
+    for i, r in enumerate(ws.get_all_values()[1:], start=2):
+        if r and r[0].strip():
+            nomor[r[0]] = i
+    waktu = datetime.datetime.now(pytz.timezone('Asia/Jakarta')).strftime("%Y-%m-%d %H:%M:%S")
+    update, baru = [], []
+    for outlet, v in perubahan.items():
+        isi = [outlet, v.get('route') or "", "1" if v.get('step5') else "0", v.get('action') or MVP_ACTION_DEFAULT,
+               "1" if v.get('followup') else "0", str(user), waktu]
+        if outlet in nomor:
+            update.append({"range": f"A{nomor[outlet]}:G{nomor[outlet]}", "values": [isi]})
+        else:
+            baru.append(isi)
+    if update:
+        ws.batch_update(update, value_input_option="RAW")
+    if baru:
+        ws.append_rows(baru, value_input_option="RAW")
+    return len(perubahan)
+
+
 def load_users():
     try: return pd.read_csv('users.csv')
     except: return pd.DataFrame()
@@ -2203,7 +2270,7 @@ def main_dashboard():
 
     if is_full_access:
         st.markdown("### 👤 User")
-        list_ijl = ["IJL"] + list(TARGET_DATABASE.keys())
+        list_ijl = ["MSS"] + list(TARGET_DATABASE.keys())
         selected_ijl = st.selectbox("Pilih User Dashboard:", list_ijl, index=0)
         
     # 2. Jika user adalah Supervisor, kunci menu hanya untuk namanya sendiri
@@ -2361,7 +2428,7 @@ def main_dashboard():
                 title = f"🏢 Target {selected_ijl}"
             else:
                 target_val = TARGET_NASIONAL_VAL
-                title = "🏢 Target IJL (All Team)"
+                title = "🏢 Target MSS (All Team)"
             
             realisasi = df_active['Jumlah'].sum()
             render_custom_progress(title, realisasi, target_val)
@@ -3209,6 +3276,17 @@ def main_dashboard():
         # --- 1. INISIALISASI MEMORI SESI LOKAL ---
         if 'mvp_saved_data' not in st.session_state:
             st.session_state['mvp_saved_data'] = {}
+        if True:  # CSV lokal: dibaca ulang tiap render
+            try:
+                st.session_state['mvp_saved_data'] = visit_plan_store.muat(get_current_time_wib())
+                st.session_state['mvp_sheet_loaded'] = True
+            except Exception as e_mvp:  # teks galat mentah tidak ditampilkan
+                try:
+                    from daftar_pesaing import jelaskan_galat
+                    _info_mvp = jelaskan_galat(e_mvp)
+                except Exception:
+                    _info_mvp = type(e_mvp).__name__
+                st.warning(f"⚠️ Rute tersimpan belum bisa dimuat dari file visit_plan.csv. {_info_mvp}")
             
         mvp_df = df_active_tab.groupby(['Nama Outlet'])['Jumlah'].sum().reset_index().sort_values('Jumlah', ascending=False)
         total_mvp_omset = mvp_df['Jumlah'].sum()
@@ -3256,17 +3334,37 @@ def main_dashboard():
                 submit_btn = st.form_submit_button("💾 Simpan Rute Kunjungan", type="primary", use_container_width=True)
                 
                 if submit_btn:
-                    # Simpan isian user ke dalam Session State (Kamus Memori)
+                    # Kumpulkan isian; hanya baris yang BERBEDA dari data tersimpan/default yang ditulis ke Sheet
+                    _perubahan_mvp = {}
                     for _, row in edited_mvp.iterrows():
-                        st.session_state['mvp_saved_data'][row['Nama Outlet']] = {
-                            'route': row['📍 Route Plan (Hari)'],
-                            'step5': row['📋 5-Step Visit Done'],
-                            'action': row['💡 Consultative Action'],
-                            'followup': row['🚀 Follow Up Done']
+                        _r = row['📍 Route Plan (Hari)']
+                        _baru = {
+                            'route': _r if isinstance(_r, str) else "",
+                            'step5': bool(row['📋 5-Step Visit Done']),
+                            'action': row['💡 Consultative Action'] or MVP_ACTION_DEFAULT,
+                            'followup': bool(row['🚀 Follow Up Done'])
                         }
-                    st.success("✅ Perencanaan Rute Kunjungan Berhasil Disimpan di Memori Lokal!")
-                    time.sleep(1)
-                    st.rerun() # Render ulang untuk menghilangkan status 'loading' pada tombol
+                        _lama = st.session_state['mvp_saved_data'].get(row['Nama Outlet'], {
+                            'route': "", 'step5': False, 'action': MVP_ACTION_DEFAULT, 'followup': False})
+                        if {k: (_lama.get(k) or ("" if k in ('route', 'action') else False)) for k in _baru} != _baru:
+                            _perubahan_mvp[row['Nama Outlet']] = _baru
+                    _mvp_ok = False
+                    try:
+                        visit_plan_store.simpan(_perubahan_mvp, get_current_time_wib())
+                        _mvp_ok = True
+                        st.session_state['mvp_saved_data'].update(_perubahan_mvp)
+                        st.success(f"✅ Rute Kunjungan tersimpan permanen ({len(_perubahan_mvp)} toko diperbarui).")
+                    except Exception as e_mvp:  # isian tetap dipertahankan selama sesi ini
+                        st.session_state['mvp_saved_data'].update(_perubahan_mvp)
+                        try:
+                            from daftar_pesaing import jelaskan_galat
+                            _info_mvp = jelaskan_galat(e_mvp)
+                        except Exception:
+                            _info_mvp = type(e_mvp).__name__
+                        st.error(f"❌ Gagal menyimpan ke file visit_plan.csv, isian hanya tersimpan sementara. {_info_mvp}")
+                    if _mvp_ok:
+                        time.sleep(1)
+                        st.rerun() # Render ulang untuk menghilangkan status 'loading' pada tombol
         else:
             st.info("Belum ada data transaksi yang cukup untuk membuat Master Visit Plan.")
             
