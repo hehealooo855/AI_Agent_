@@ -2270,7 +2270,7 @@ def main_dashboard():
 
     if is_full_access:
         st.markdown("### 👤 User")
-        list_ijl = ["MSS"] + list(TARGET_DATABASE.keys())
+        list_ijl = ["IJL"] + list(TARGET_DATABASE.keys())
         selected_ijl = st.selectbox("Pilih User Dashboard:", list_ijl, index=0)
         
     # 2. Jika user adalah Supervisor, kunci menu hanya untuk namanya sendiri
