@@ -2428,7 +2428,7 @@ def main_dashboard():
                 title = f"🏢 Target {selected_ijl}"
             else:
                 target_val = TARGET_NASIONAL_VAL
-                title = "🏢 Target MSS (All Team)"
+                title = "🏢 Target IJL (All Team)"
             
             realisasi = df_active['Jumlah'].sum()
             render_custom_progress(title, realisasi, target_val)
